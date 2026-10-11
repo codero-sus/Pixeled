@@ -34,7 +34,6 @@ jobs:
             mv /tmp/cmdline-tools-unpacked/cmdline-tools "$SDK/cmdline-tools/latest"
           fi
           SDKM="$(find "$SDK" -name sdkmanager -type f | head -1)"
-          echo "$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "$(dirname "$SDKM")" >> "$GITHUB_PATH"
