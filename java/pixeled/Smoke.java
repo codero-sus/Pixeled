@@ -253,7 +253,10 @@ public final class Smoke {
 
     double startX = game.player.x, startZ = game.player.z;
     for (int frame = 0; frame < 30; frame++) game.update(1 / 30.0, 1, 0, false, false, false);
-    check(Math.abs(game.player.x - startX) + Math.abs(game.player.z - startZ) > 0.4, "walking moves the player");
+    double walked = Math.abs(game.player.x - startX) + Math.abs(game.player.z - startZ);
+    check(walked > 0.4, "walking moves the player (moved " + String.format("%.2f", walked)
+        + " from " + startX + "," + startZ + " to " + game.player.x + "," + game.player.z
+        + " at y=" + game.player.y + " onGround=" + game.player.onGround + ")");
     check(!game.player.collides(game.world), "and never embeds the player");
   }
 

@@ -195,9 +195,10 @@ public final class RockzSmoke {
         controls.clear();
 
         // The stick owns the bottom-left, and buttons win over it wherever they are.
-        controls.pointerDown(1, 80, 1800);
+        controls.pointerDown(1, controls.joystickAnchorX(), controls.joystickAnchorY());
         check("move".equals(controls.actionOf(1)), "the bottom-left corner is the joystick");
-        controls.drag(1, 160, 1800);
+        controls.drag(1, controls.joystickAnchorX() + TouchControls.JOYSTICK_RADIUS * 3,
+                controls.joystickAnchorY());
         near(controls.moveX(), 1, 0.02, "pushing the stick right drives movement");
         check(controls.joystickStrength() > 0.9, "the stick reports how far it is pushed");
         controls.pointerUp(1);
