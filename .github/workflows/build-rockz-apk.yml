@@ -21,10 +21,27 @@ jobs:
       # where it fails; use the preinstalled SDK instead.
       - name: Install the Android SDK packages Rockz needs
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --version
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          set -o pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -x "$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)" ]; then
+            echo "No usable SDK at $SDK; downloading the command line tools"
+            SDK="$HOME/android-sdk"
+            curl -sSLo /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            rm -rf /tmp/cmdline-tools-unpacked
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-unpacked
+            mkdir -p "$SDK/cmdline-tools"
+            mv /tmp/cmdline-tools-unpacked/cmdline-tools "$SDK/cmdline-tools/latest"
+          fi
+          SDKM="$(find "$SDK" -name sdkmanager -type f | head -1)"
+          echo "$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKM")" >> "$GITHUB_PATH"
+          export ANDROID_HOME="$SDK"
+          "$SDKM" --version
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
