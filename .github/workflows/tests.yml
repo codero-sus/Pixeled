@@ -46,8 +46,28 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Static reference check
+        run: |
+          python3 -m pip install --quiet javalang
+          python3 tests/java_check.py java/pixeled rockz-android/app/src
       - name: Compile the Java edition
-        run: javac -Xlint:all -d out java/pixeled/*.java
+        run: |
+          set -o pipefail
+          javac -Xlint:all -d out java/pixeled/*.java 2>&1 | tee javac-java.log
+          status=$?
+          if [ $status -ne 0 ]; then
+            grep -E "error:" javac-java.log | head -60 | while IFS= read -r line; do
+              echo "::error title=javac::$line"
+            done
+          fi
+          exit $status
+      - name: Upload javac output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javac-java-log
+          path: javac-java.log
+          if-no-files-found: ignore
       - name: Java edition smoke test
         run: java -Djava.awt.headless=true -cp out pixeled.Smoke
       - name: Headless screenshot
@@ -67,6 +87,7 @@ jobs:
       - name: Compile the Android-free core of Rockz
         working-directory: rockz-android/app/src
         run: |
+          set -o pipefail
           javac -Xlint:all -d /tmp/rockz-core \
             main/java/com/pixeled/rockz/Blocks.java \
             main/java/com/pixeled/rockz/Noise.java \
@@ -77,6 +98,20 @@ jobs:
             main/java/com/pixeled/rockz/Renderer.java \
             main/java/com/pixeled/rockz/TouchControls.java \
             test/java/com/pixeled/rockz/MemoryStore.java \
-            test/java/com/pixeled/rockz/RockzSmoke.java
+            test/java/com/pixeled/rockz/RockzSmoke.java 2>&1 | tee /tmp/rockz-javac.log
+          status=$?
+          if [ $status -ne 0 ]; then
+            grep -E "error:" /tmp/rockz-javac.log | head -60 | while IFS= read -r line; do
+              echo "::error title=javac::$line"
+            done
+          fi
+          exit $status
+      - name: Upload javac output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javac-rockz-log
+          path: /tmp/rockz-javac.log
+          if-no-files-found: ignore
       - name: Rockz smoke test
         run: java -Djava.awt.headless=true -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke

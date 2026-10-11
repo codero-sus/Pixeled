@@ -12,7 +12,7 @@ import java.util.Set;
  * contract, world generation, the ray caster, the player sweep and step-up, the renderer and the
  * save round-trip — so a broken build is caught without an emulator:
  *
- *     javac -d out app/src/main/java/com/pixeled/rockz/{Blocks,Noise,SaveStore,WorldModel,PlayerModel,Raycast,Renderer}.java \
+ *     javac -d out app/src/main/java/com/pixeled/rockz/{Blocks,Noise,SaveStore,WorldModel,PlayerModel,Raycast,Renderer,TouchControls}.java \
  *           app/src/test/java/com/pixeled/rockz/{MemoryStore,RockzSmoke}.java
  *     java -cp out com.pixeled.rockz.RockzSmoke
  */
