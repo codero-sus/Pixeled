@@ -181,7 +181,7 @@ public final class RockzSmoke {
         float[] jump = controls.anchor("jump");
         float[] fly = controls.anchor("fly");
         float[] down = controls.anchor("crouch");
-        for (float[] anchor : new float[]{mine, place, jump, fly, down}) {
+        for (float[] anchor : new float[][]{mine, place, jump, fly, down}) {
             check(anchor != null, "every button has a place on screen");
         }
         check(Math.hypot(mine[0] - place[0], mine[1] - place[1]) > TouchControls.BUTTON_RADIUS * 2.3f * 3,

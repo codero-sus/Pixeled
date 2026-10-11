@@ -154,7 +154,8 @@ final class PlayerModel {
     }
 
     boolean reaches(int bx, int by, int bz) {
-        return Math.hypot(bx + 0.5 - x, by + 0.5 - (y + HEIGHT / 2), bz + 0.5 - z) < 6.5;
+        double dx = bx + 0.5 - x, dy = by + 0.5 - (y + HEIGHT / 2), dz = bz + 0.5 - z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz) < 6.5;
     }
 
     boolean overlaps(int bx, int by, int bz) {
