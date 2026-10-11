@@ -63,7 +63,7 @@ The Android-free core is compiled and smoke-tested on the desktop JVM by
 ```bash
 cd app/src
 javac -d /tmp/rockz-core \
-  main/java/com/pixeled/rockz/{Blocks,Noise,SaveStore,WorldModel,PlayerModel,Raycast,Renderer}.java \
+  main/java/com/pixeled/rockz/{Blocks,Noise,SaveStore,WorldModel,PlayerModel,Raycast,Renderer,TouchControls}.java \
   test/java/com/pixeled/rockz/{MemoryStore,RockzSmoke}.java
 java -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke
 ```

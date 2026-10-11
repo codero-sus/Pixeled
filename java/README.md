@@ -20,7 +20,9 @@ java -cp out pixeled.Pixeled --no-save              # ignore the save file
 java -cp out pixeled.Pixeled --render --out shot.png   # headless screenshot, no window
 ```
 
-Requires a JDK 17+ (the code targets Java 8 language level, so older JDKs work too).
+Requires a JDK 17+ (the code targets Java 8 language level, so older JDKs work too). The
+`.github/workflows/tests.yml` workflow compiles the package, runs the smoke suite and writes a
+headless screenshot on every push.
 
 ## Controls
 
