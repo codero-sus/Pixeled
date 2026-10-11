@@ -1,0 +1,69 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'web/**'
+      - 'python/**'
+      - 'java/**'
+      - 'rockz-android/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'index.html'
+      - '.github/workflows/tests.yml'
+  pull_request:
+
+jobs:
+  node:
+    name: Web edition (3D world, renderer, interface)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: World, atlas and mesher tests
+        run: node tests/world_test.mjs
+      - name: Web smoke test (world, player, HUD, input, storage)
+        run: node tests/web_smoke.mjs
+      - name: Renderer test (chunk streaming, edits, sky, avatar)
+        run: node tests/render_test.mjs
+      - name: Generate preview renders
+        run: node tools/render-preview.mjs artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixeled-previews
+          path: artifacts/*.png
+          if-no-files-found: warn
+
+  python:
+    name: Python edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python modules smoke test
+        run: python3 tests/python_smoke.py
+      - name: Cross-edition parity (web / Python / Java / Android)
+        run: python3 tests/java_parity.py
+
+  java:
+    name: Java edition (compile and run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile every desktop class
+        run: |
+          mkdir -p build
+          javac -Xlint:all -d build java/pixeled3d/*.java
+      - name: Compile the headless smoke test
+        run: javac -Xlint:all -d build -cp build tests/java/pixeled3d/PixeledSmoke.java
+      - name: Run the headless smoke test
+        run: java -Djava.awt.headless=true -cp build pixeled3d.PixeledSmoke
