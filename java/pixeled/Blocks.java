@@ -59,7 +59,17 @@ public final class Blocks {
 
   public static boolean solid(int id) {
     Object[] row = entry(id);
-    return row != null && (Boolean) row[4];
+    return row != null && (Boolean) row[5];             // id, name, top, side, bottom, solid, ...
+  }
+
+  public static boolean transparent(int id) {
+    Object[] row = entry(id);
+    return row != null && (Boolean) row[6];
+  }
+
+  public static boolean placeable(int id) {
+    Object[] row = entry(id);
+    return row == null || (Boolean) row[7];
   }
 
   private static int red(int rgb) {
