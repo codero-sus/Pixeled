@@ -19,6 +19,15 @@ from pathlib import Path
 import javalang
 from javalang import tree
 
+# A few JDK signatures that are easy to get wrong when porting Python to Java.
+# Math.hypot is the one that bit us: Python's takes any number of arguments.
+JDK_ARITIES = {
+    'Math.hypot': {2}, 'Math.pow': {2}, 'Math.min': {2}, 'Math.max': {2}, 'Math.atan2': {2},
+    'Math.abs': {1}, 'Math.sqrt': {1}, 'Math.floor': {1}, 'Math.ceil': {1}, 'Math.round': {1},
+    'Math.sin': {1}, 'Math.cos': {1}, 'Math.tan': {1}, 'Math.toRadians': {1}, 'Math.toDegrees': {1},
+    'Math.random': {0},
+}
+
 
 class ClassInfo:
     def __init__(self, name, package):
@@ -27,6 +36,7 @@ class ClassInfo:
         self.qualified = '%s.%s' % (package, name) if package else name
         self.fields = {}        # name -> declared type (simple name)
         self.methods = {}       # name -> list of arities
+        self.varargs = set()    # methods that accept any number of arguments
         self.statics = set()    # names reachable as Class.member, including nested types
         self.nested = {}        # nested class name -> its member names
         self.extends_foreign = False
@@ -112,6 +122,8 @@ def build_classes(files):
                             info.statics.add(declarator.name)
                 elif isinstance(member, tree.MethodDeclaration):
                     info.methods.setdefault(member.name, []).append(len(member.parameters or []))
+                    if any(getattr(parameter, 'varargs', False) for parameter in (member.parameters or [])):
+                        info.varargs.add(member.name)
                     if 'static' in member.modifiers:
                         info.statics.add(member.name)
                 elif isinstance(member, tree.ClassDeclaration):
@@ -148,6 +160,8 @@ def check_file(path, package, by_simple):
             line = source[:match.start()].count('\n') + 1
             problems.append('line %d: %s.%s is not declared on %s' % (line, owner, member, owner))
 
+    problems.extend(check_arities(path, package, by_simple))
+
     local_types = declared_fields_with_types(path, package, by_simple)
     for name, type_name in local_types.items():
         info = known_classes.get(type_name)
@@ -158,6 +172,35 @@ def check_file(path, package, by_simple):
             if member not in info.members():
                 line = source[:match.start()].count('\n') + 1
                 problems.append('line %d: %s.%s is not declared on %s' % (line, name, member, type_name))
+    return problems
+
+
+def check_arities(path, package, by_simple):
+    """Method calls against our own classes and a small table of JDK methods."""
+    unit = javalang.parse.parse(path.read_text())
+    known_classes = by_simple.get(package, {})
+    problems = []
+    for _, node in unit:
+        if not isinstance(node, tree.MethodInvocation):
+            continue
+        qualifier = node.qualifier
+        if not qualifier or '.' in qualifier or not qualifier[:1].isalpha():
+            continue
+        arity = len(node.arguments or [])
+        info = known_classes.get(qualifier)
+        if info is None:
+            expected = JDK_ARITIES.get('%s.%s' % (qualifier, node.member))
+            if expected is not None and arity not in expected:
+                problems.append('line %d: %s.%s called with %d arguments, needs %s' % (
+                    node.position.line, qualifier, node.member, arity,
+                    '/'.join(str(value) for value in sorted(expected))))
+            continue
+        if node.member in info.varargs or node.member not in info.methods:
+            continue
+        if arity not in info.methods[node.member]:
+            problems.append('line %d: %s.%s called with %d arguments, declares %s' % (
+                node.position.line, qualifier, node.member, arity,
+                '/'.join(str(value) for value in sorted(info.methods[node.member]))))
     return problems
 
 
