@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Pixeled — 3D block sandbox</title>
+<meta name="description" content="A first-person 3D voxel sandbox that runs in your browser. A new random world every time.">
+<meta name="theme-color" content="#0d1b2a">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="game-shell">
+  <canvas id="game" aria-label="3D block world. Click to play. WASD to move, Space to jump, left click to mine, right click to build."></canvas>
+
+  <!-- ------------------------------------------------------------- heads-up display -->
+  <div class="hud">
+    <div class="panel stats">
+      <div class="brand">PIXELED<span>3D</span></div>
+      <dl>
+        <div><dt>fps</dt><dd id="hud-fps">—</dd></div>
+        <div><dt>xyz</dt><dd id="hud-position">—</dd></div>
+        <div><dt>biome</dt><dd id="hud-biome">—</dd></div>
+        <div><dt>time</dt><dd id="hud-clock">—</dd></div>
+        <div><dt>mode</dt><dd id="hud-mode">WALKING</dd></div>
+        <div><dt>edits</dt><dd id="hud-edits">0</dd></div>
+      </dl>
+      <button class="seed" id="copy-seed" type="button" title="Copy a link to this world">
+        seed <span id="hud-seed">—</span>
+      </button>
+    </div>
+
+    <div class="actions">
+      <button id="toggle-sound" type="button" title="Sound on or off">♪</button>
+      <button id="toggle-fly" type="button" title="Fly (F)">✈</button>
+      <button id="open-help" type="button" title="Controls (H)">?</button>
+      <button id="toggle-fullscreen" type="button" title="Fullscreen">⛶</button>
+      <button id="new-world" type="button" class="primary" title="Generate a brand new random world">↻ New world</button>
+    </div>
+
+    <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
+
+    <div class="start-hint" id="start-hint">
+      <b>Click to play</b>
+      <span>WASD move · Space jump · left click mine · right click build · F to fly</span>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="hotbar" id="hotbar" role="toolbar" aria-label="Blocks"></div>
+    <div class="selected" id="selected-block">Grass</div>
+
+    <!-- touch controls, shown on phones and tablets -->
+    <div class="joystick" id="joystick"><div class="joystick-knob" id="joystick-knob"></div></div>
+    <div class="touch-controls">
+      <button class="touch-button wide" data-touch-action="mine" type="button">MINE</button>
+      <button class="touch-button wide" data-touch-action="place" type="button">PLACE</button>
+      <button class="touch-button round" data-touch-action="jump" type="button">↑</button>
+      <button class="touch-button round" data-touch-action="fly" type="button">✈</button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- loading screen -->
+  <div class="overlay loading" id="loading">
+    <div class="card">
+      <h1>Pixeled <span>3D</span></h1>
+      <p id="loading-text">Generating a brand new world…</p>
+      <div class="bar"><i id="loading-bar"></i></div>
+      <small>Every world is different: hills, caves, forests, deserts and snowy peaks are all rolled fresh from a random seed.</small>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- help sheet -->
+  <div class="overlay modal" id="help-modal" hidden>
+    <section class="card">
+      <h2>How to play</h2>
+      <div class="help-grid">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Walk around</span></div>
+        <div><kbd>Space</kbd><span>Jump (or fly up)</span></div>
+        <div><kbd>Shift</kbd><span>Sprint (or fly down)</span></div>
+        <div><kbd>F</kbd><span>Toggle flying</span></div>
+        <div><kbd>Left click</kbd><span>Mine the block you are aiming at</span></div>
+        <div><kbd>Right click</kbd><span>Build with the selected block</span></div>
+        <div><kbd>1</kbd>–<kbd>9</kbd><span>Choose a block, or scroll</span></div>
+        <div><kbd>Middle click</kbd><span>Pick the block you are looking at</span></div>
+        <div><kbd>Esc</kbd><span>Release the mouse</span></div>
+      </div>
+      <p class="touch-note">On a phone or tablet: drag the screen to look, use the thumb-stick to walk, and tap the MINE, PLACE, JUMP and ✈ buttons.</p>
+      <p class="note">Your world saves automatically — seed plus every block you changed. Press <b>New world</b> any time for a completely different random landscape.</p>
+      <button class="primary-button" id="got-it" type="button">Let's build <span>→</span></button>
+      <button class="link" id="close-help" type="button">close</button>
+    </section>
+  </div>
+</div>
+
+<script type="module">
+  import { start } from './web/main.js';
+  start();
+</script>
+</body>
+</html>

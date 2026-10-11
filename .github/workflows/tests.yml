@@ -1,0 +1,82 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'web/**'
+      - 'python/**'
+      - 'java/**'
+      - 'rockz-android/**'
+      - 'tests/**'
+      - 'index.html'
+      - '.github/workflows/tests.yml'
+
+jobs:
+  web:
+    name: Web edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Web modules smoke test
+        run: node tests/web_smoke.mjs
+
+  python:
+    name: Python edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python edition smoke test
+        run: python3 tests/python_smoke.py
+      - name: Headless screenshot
+        run: python3 python/pixeled.py --render /tmp/pixeled.png --seed 2408 --width 320 --height 180
+
+  java:
+    name: Java edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile the Java edition
+        run: javac -Xlint:all -d out java/pixeled/*.java
+      - name: Java edition smoke test
+        run: java -Djava.awt.headless=true -cp out pixeled.Smoke
+      - name: Headless screenshot
+        run: |
+          java -Djava.awt.headless=true -cp out pixeled.Pixeled --render --seed 2408 --width 320 --height 180 --out /tmp/pixeled-java.png
+          ls -l /tmp/pixeled-java.png
+
+  rockz:
+    name: Rockz core (mobile edition)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile the Android-free core of Rockz
+        working-directory: rockz-android/app/src
+        run: |
+          javac -Xlint:all -d /tmp/rockz-core \
+            main/java/com/pixeled/rockz/Blocks.java \
+            main/java/com/pixeled/rockz/Noise.java \
+            main/java/com/pixeled/rockz/SaveStore.java \
+            main/java/com/pixeled/rockz/WorldModel.java \
+            main/java/com/pixeled/rockz/PlayerModel.java \
+            main/java/com/pixeled/rockz/Raycast.java \
+            main/java/com/pixeled/rockz/Renderer.java \
+            main/java/com/pixeled/rockz/TouchControls.java \
+            test/java/com/pixeled/rockz/MemoryStore.java \
+            test/java/com/pixeled/rockz/RockzSmoke.java
+      - name: Rockz smoke test
+        run: java -Djava.awt.headless=true -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke
