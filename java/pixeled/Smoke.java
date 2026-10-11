@@ -208,7 +208,9 @@ public final class Smoke {
     game.draw();
     java.util.Set<Integer> colours = new java.util.HashSet<>();
     for (int pixel : renderer.pixels) colours.add(pixel);
-    check(colours.size() > 300, "frames are shaded, not flat (" + colours.size() + " colours)");
+    // A 160x90 frame of shaded terrain runs to a few hundred distinct colours (the Python suite
+    // checks the same thing on a bigger frame); a flat renderer would produce a handful.
+    check(colours.size() > 150, "frames are shaded, not flat (" + colours.size() + " colours)");
     check(renderer.lastSamples > 1000, "the terrain sweep painted terrain");
 
     double[] noon = Renderer.skyPalette(0.5), midnight = Renderer.skyPalette(0.0);

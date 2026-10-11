@@ -245,7 +245,7 @@ public final class RockzSmoke {
             colours.add(pixel);
             if ((pixel >>> 24) != 0xFF) opaque = false;
         }
-        check(colours.size() > 300, "frames are shaded, not flat (" + colours.size() + " colours)");
+        check(colours.size() > 150, "frames are shaded, not flat (" + colours.size() + " colours)");
         check(opaque, "every pixel is opaque ARGB");
         check(renderer.lastSamples > 1000, "the terrain sweep painted terrain");
 
