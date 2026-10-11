@@ -330,7 +330,9 @@ public final class Renderer {
         int red = (int) (((colour >> 16) & 255) * grain);
         int green = (int) (((colour >> 8) & 255) * grain);
         int blue = (int) ((colour & 255) * grain);
-        rowPixels[column] = mixWithSky(Blocks.clamp(red) << 16 | Blocks.clamp(green) << 8 | Blocks.clamp(blue),
+        // Opaque: these rows are copied into the ARGB framebuffer as they are.
+        rowPixels[column] = 0xFF000000 | mixWithSky(
+            Blocks.clamp(red) << 16 | Blocks.clamp(green) << 8 | Blocks.clamp(blue),
             skyRed, skyGreen, skyBlue, fog);
         painted = true;
         double forwardDepth = distance * (dirX * forwardX + dirY * forwardY + dirZ * forwardZ);

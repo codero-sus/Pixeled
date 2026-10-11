@@ -271,10 +271,7 @@ public final class World {
           if (Math.hypot(dx, dz) + Math.abs(dy) * 0.35 > spread + 0.45) continue;
           if (dx == 0 && dz == 0 && dy < 1) continue;
           int px = x + dx, py = crown + dy, pz = z + dz;
-          if (inside(px, py, pz) && (data[index(px, py, pz)] & 255) == AIR) {
-            data[index(px, py, pz)] = (byte) LEAVES;
-            if (py > groundTop[px][pz]) groundTop[px][pz] = (byte) py;
-          }
+          placeCube(px, py, pz, LEAVES);   // must go through the render index, not straight to data
         }
       }
     }

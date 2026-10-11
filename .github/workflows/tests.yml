@@ -36,6 +36,11 @@ jobs:
         run: python3 tests/python_smoke.py
       - name: Headless screenshot
         run: python3 python/pixeled.py --render /tmp/pixeled.png --seed 2408 --width 320 --height 180
+      - name: Upload the screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixeled-python-screenshot
+          path: /tmp/pixeled.png
 
   java:
     name: Java edition
@@ -83,6 +88,13 @@ jobs:
         run: |
           java -Djava.awt.headless=true -cp out pixeled.Pixeled --render --seed 2408 --width 320 --height 180 --out /tmp/pixeled-java.png
           ls -l /tmp/pixeled-java.png
+      - name: Upload the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixeled-java-screenshot
+          path: /tmp/pixeled-java.png
+          if-no-files-found: ignore
 
   rockz:
     name: Rockz core (mobile edition)
