@@ -69,7 +69,16 @@ jobs:
           path: javac-java.log
           if-no-files-found: ignore
       - name: Java edition smoke test
-        run: java -Djava.awt.headless=true -cp out pixeled.Smoke
+        run: |
+          set -o pipefail
+          status=0
+          java -Djava.awt.headless=true -cp out pixeled.Smoke 2>&1 | tee smoke-java.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAIL|Exception|Error|^\s+at " smoke-java.log | head -40 | while IFS= read -r line; do
+              echo "::error title=smoke::$line"
+            done
+          fi
+          exit "$status"
       - name: Headless screenshot
         run: |
           java -Djava.awt.headless=true -cp out pixeled.Pixeled --render --seed 2408 --width 320 --height 180 --out /tmp/pixeled-java.png
@@ -114,4 +123,13 @@ jobs:
           path: rockz-android/app/src/rockz-javac.log
           if-no-files-found: ignore
       - name: Rockz smoke test
-        run: java -Djava.awt.headless=true -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke
+        run: |
+          set -o pipefail
+          status=0
+          java -Djava.awt.headless=true -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke 2>&1 | tee smoke-rockz.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAIL|Exception|Error|^\s+at " smoke-rockz.log | head -40 | while IFS= read -r line; do
+              echo "::error title=smoke::$line"
+            done
+          fi
+          exit "$status"
