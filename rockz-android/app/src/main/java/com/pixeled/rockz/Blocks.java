@@ -49,7 +49,12 @@ final class Blocks {
 
     static boolean solid(int id) {
         Object[] entry = row(id);
-        return entry != null && (Boolean) entry[4];
+        return entry != null && (Boolean) entry[5];     // id, name, top, side, bottom, solid, ...
+    }
+
+    static boolean transparent(int id) {
+        Object[] entry = row(id);
+        return entry != null && (Boolean) entry[6];
     }
 
     static int toArgb(int rgb) {
