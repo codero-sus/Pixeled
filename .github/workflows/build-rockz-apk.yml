@@ -16,15 +16,31 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # ubuntu-latest already ships the Android SDK and cmdline-tools. The
+      # android-actions/setup-android action is deprecated and now runs on Node 24,
+      # where it fails; use the preinstalled SDK instead.
+      - name: Install the Android SDK packages Rockz needs
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --version
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
       - name: Build debug APK
         working-directory: rockz-android
-        run: gradle :app:assembleDebug
+        run: |
+          set -o pipefail
+          status=0
+          gradle :app:assembleDebug --console=plain 2>&1 | tee /tmp/gradle.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "error:|FAILURE:|What went wrong|^> |Could not|required by" /tmp/gradle.log \
+              | head -60 | while IFS= read -r line; do
+              echo "::error title=gradle::$line"
+            done
+          fi
+          exit "$status"
       - uses: actions/upload-artifact@v4
         with:
           name: rockz-debug-apk
