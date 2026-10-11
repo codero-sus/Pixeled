@@ -1,0 +1,410 @@
+/* Pixeled 3D — HUD styling. The canvas fills the window; everything else floats above it. */
+
+:root {
+  --ink: #eef5ef;
+  --muted: #9db0b6;
+  --panel: rgba(11, 23, 33, 0.72);
+  --panel-solid: #0e1c28;
+  --edge: rgba(160, 214, 255, 0.18);
+  --mint: #b3df9e;
+  --amber: #ffd479;
+  --shadow: 0 12px 30px rgba(4, 10, 16, 0.45);
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1620;
+  color: var(--ink);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.game-shell { position: fixed; inset: 0; }
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* ---------------------------------------------------------------- HUD */
+
+.hud { position: absolute; inset: 0; pointer-events: none; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.stats {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 12px 14px 10px;
+  min-width: 176px;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.brand span { color: var(--mint); margin-left: 4px; }
+
+.stats dl { margin: 10px 0 8px; display: grid; gap: 3px; }
+
+.stats dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+
+.stats dt { color: var(--muted); text-transform: lowercase; letter-spacing: 0.08em; }
+
+.stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.seed {
+  pointer-events: auto;
+  width: 100%;
+  background: rgba(179, 223, 158, 0.12);
+  border: 1px solid rgba(179, 223, 158, 0.3);
+  color: var(--mint);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.seed:hover { background: rgba(179, 223, 158, 0.2); }
+
+.actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.actions button {
+  min-width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+
+.actions button:hover { border-color: rgba(179, 223, 158, 0.5); }
+
+.actions button.active { background: rgba(179, 223, 158, 0.22); border-color: rgba(179, 223, 158, 0.6); }
+
+.actions button.primary {
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: linear-gradient(180deg, #7dcf62, #4fa544);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #0b1c10;
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  opacity: 0.85;
+}
+
+.crosshair i {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.75);
+}
+
+.crosshair i:first-child { left: 50%; top: 0; width: 2px; height: 22px; transform: translateX(-50%); }
+.crosshair i:last-child { top: 50%; left: 0; height: 2px; width: 22px; transform: translateY(-50%); }
+
+.start-hint {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: rgba(8, 18, 26, 0.72);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.4s ease;
+}
+
+.start-hint b { display: block; font-size: 18px; margin-bottom: 4px; }
+.start-hint span { color: var(--muted); font-size: 12px; }
+.start-hint.hidden { opacity: 0; visibility: hidden; }
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 132px;
+  transform: translate(-50%, 8px);
+  background: rgba(8, 18, 26, 0.85);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  max-width: min(80vw, 460px);
+  text-align: center;
+}
+
+.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------------------------------------------------------------- hotbar */
+
+.hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.slot {
+  position: relative;
+  width: 56px;
+  height: 62px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font: inherit;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.slot:hover { transform: translateY(-2px); }
+
+.slot.active {
+  border-color: var(--mint);
+  background: rgba(179, 223, 158, 0.18);
+  box-shadow: 0 0 0 1px rgba(179, 223, 158, 0.35), 0 6px 18px rgba(90, 180, 110, 0.25);
+}
+
+.slot-key {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+/* A tiny fake cube: bright top face, darker side — reads as a block at a glance. */
+.slot-block {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: linear-gradient(158deg, var(--block-top) 0 58%, var(--block-side) 58% 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.slot-name { font-size: 8px; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
+
+.selected {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- touch controls */
+
+.joystick {
+  position: absolute;
+  width: 124px;
+  height: 124px;
+  margin: -62px 0 0 -62px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: rgba(10, 22, 32, 0.35);
+  display: none;
+}
+
+.joystick.visible { display: block; }
+
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(179, 223, 158, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+.touch-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 108px;
+  display: none;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+.touch-button {
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  touch-action: none;
+}
+
+.touch-button.round { width: 62px; height: 62px; font-size: 22px; }
+.touch-button.wide { width: 78px; height: 78px; font-size: 12px; letter-spacing: 0.08em; }
+.touch-button.pressed { background: rgba(179, 223, 158, 0.4); transform: scale(0.96); }
+
+@media (pointer: coarse) {
+  .touch-controls { display: flex; }
+  .crosshair { opacity: 0.6; }
+  .hotbar { bottom: 30px; }
+  .slot { width: 48px; height: 56px; }
+  .selected { display: none; }
+}
+
+@media (max-width: 720px) {
+  .stats { min-width: 148px; padding: 10px 12px; }
+  .stats dl > div { font-size: 10px; }
+  .actions button.primary { padding: 0 10px; font-size: 11px; }
+  .start-hint { top: 40%; padding: 10px 14px; }
+  .start-hint b { font-size: 15px; }
+  .start-hint span { font-size: 10px; }
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(circle at 50% 30%, rgba(31, 62, 84, 0.75), rgba(6, 13, 20, 0.94));
+  z-index: 5;
+}
+
+.overlay.hidden { display: none; }
+
+.card {
+  width: min(560px, 94vw);
+  background: var(--panel-solid);
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+  padding: 26px 28px 24px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.card h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: 0.04em; }
+.card h1 span { color: var(--mint); }
+.card h2 { margin: 0 0 16px; font-size: 22px; }
+.card p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+.card small { display: block; color: #7f9299; font-size: 11px; line-height: 1.5; margin-top: 14px; }
+.card .note { background: rgba(179, 223, 158, 0.08); border-left: 3px solid var(--mint); text-align: left; padding: 10px 12px; border-radius: 8px; }
+
+.bar { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #79cf5f, #b3df9e); transition: width 0.2s ease; }
+
+.help-grid { display: grid; gap: 8px; text-align: left; margin-bottom: 18px; }
+.help-grid > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.help-grid span { color: var(--muted); margin-left: auto; text-align: right; }
+
+kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.touch-note { display: none; }
+
+@media (pointer: coarse) {
+  .touch-note { display: block; background: rgba(255, 212, 121, 0.1); border-left: 3px solid var(--amber); text-align: left; padding: 10px 12px; border-radius: 8px; }
+}
+
+.primary-button {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 22px;
+  font: inherit;
+  font-weight: 700;
+  color: #0b1c10;
+  background: linear-gradient(180deg, #8fdc70, #52a846);
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(60, 140, 70, 0.35);
+}
+
+.primary-button span { margin-left: 6px; }
+
+button.link {
+  display: block;
+  margin: 12px auto 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
