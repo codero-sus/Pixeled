@@ -18,9 +18,11 @@ public final class Noise {
       state += 0x6D2B79F5;                       // mulberry32, exactly as in noise.js
       int t = state;
       t = (t ^ (t >>> 15)) * (1 | t);
-      t = t + (t ^ (t >>> 7)) * (61 | t);
-      int advanced = t ^ (t >>> 14);
-      int j = (int) (Math.floor((advanced >>> 0) / 4294967296.0 * (i + 1)));
+      // mulberry32 folds the summed value back in with an XOR before the final shift;
+      // (t >>> 0) would still be a signed int in Java, so widen through a long to divide.
+      t = (t + (t ^ (t >>> 7)) * (61 | t)) ^ t;
+      int bits = t ^ (t >>> 14);
+      int j = (int) Math.floor((bits & 0xFFFFFFFFL) / 4294967296.0 * (i + 1));
       int swap = table[i];
       table[i] = table[j];
       table[j] = swap;
@@ -92,6 +94,6 @@ public final class Noise {
     h ^= h >>> 13;
     h *= 0xC2B2AE35;
     h ^= h >>> 16;
-    return (h >>> 0) / 4294967296.0;
+    return (h & 0xFFFFFFFFL) / 4294967296.0;
   }
 }
