@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101c2b">
+  <title>Pixeled — a 3D world you can build in</title>
+  <meta name="description" content="Pixeled is a cozy 3D voxel sandbox for the browser: explore procedural worlds, dig, build and come back later — your world is saved.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Pixeled 3D world"></canvas>
+
+  <div id="hud">
+    <div id="crosshair" aria-hidden="true"><span></span></div>
+
+    <div id="topbar">
+      <div class="stat-group">
+        <span id="stat-biome" class="stat strong">plains</span>
+        <span id="stat-coords" class="stat">0 0 0</span>
+        <span id="stat-mode" class="stat">walking</span>
+      </div>
+      <div class="stat-group right">
+        <span id="stat-clock" class="stat strong">07:12</span>
+        <span id="stat-phase" class="stat">Daytime</span>
+        <span id="stat-fps" class="stat">60 fps</span>
+        <span id="stat-chunks" class="stat">0 chunks</span>
+      </div>
+    </div>
+
+    <div id="target-row">
+      <span id="stat-target">—</span>
+      <div id="break-progress-wrap"><div id="break-progress"></div></div>
+    </div>
+
+    <div id="bottom-bar">
+      <div id="hotbar-name">Grass</div>
+      <div id="hotbar"></div>
+      <div id="hotbar-meta">
+        <button id="page-button" class="chip" type="button">E · blocks <span>1/2</span></button>
+        <span id="stat-seed" class="chip">seed 0</span>
+        <button id="camera-button" class="chip" type="button">V · camera</button>
+        <button id="fly-button" class="chip" type="button">F · fly</button>
+      </div>
+    </div>
+
+    <div id="touch-controls">
+      <div id="joystick"><div id="joystick-knob"></div></div>
+      <div id="touch-buttons">
+        <button type="button" class="touch-button" data-touch-action="dig">DIG</button>
+        <button type="button" class="touch-button" data-touch-action="place">PLACE</button>
+        <button type="button" class="touch-button wide" data-touch-action="jump">JUMP</button>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <div id="debug" hidden>
+      <h3>Pixeled debug</h3>
+      <div class="debug-row"><span>position</span><b id="debug-pos">0 0 0</b></div>
+      <div class="debug-row"><span>chunks loaded</span><b id="debug-chunks">0</b></div>
+      <div class="debug-row"><span>blocks placed</span><b id="debug-placed">0</b></div>
+      <div class="debug-row"><span>seed</span><b id="debug-seed">0</b></div>
+      <p class="hint">F3 to hide · F fly · V camera · E blocks page · 1–9 select · middle click pick</p>
+    </div>
+  </div>
+
+  <div id="play-prompt" class="overlay">
+    <div class="panel">
+      <h1><span class="brand-mark">▦</span> pix<span class="accent">eled</span></h1>
+      <p class="lede">A cozy 3D voxel world: walk, dig, build. Your world is saved in this browser and
+        waiting when you come back.</p>
+      <div class="controls-grid">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>move</span></div>
+        <div><kbd>Space</kbd><span>jump · double-tap to fly</span></div>
+        <div><kbd>Shift</kbd><span>sneak · swim down</span></div>
+        <div><kbd>Ctrl</kbd><span>sprint</span></div>
+        <div><span class="mouse left"></span><span>dig</span></div>
+        <div><span class="mouse right"></span><span>place</span></div>
+        <div><kbd>1</kbd>–<kbd>9</kbd><span>choose a block</span></div>
+        <div><kbd>F3</kbd><span>debug info</span></div>
+      </div>
+      <div class="seed-row">
+        <span class="muted">World seed</span>
+        <code id="seed-text">0</code>
+        <button id="copy-seed-button" class="chip" type="button">copy</button>
+      </div>
+      <button id="play-button" class="primary-button" type="button">Click to play <span>→</span></button>
+      <p class="hint">Pointer lock: press <kbd>Esc</kbd> for the menu. On phones, use the joystick and
+        the DIG / PLACE / JUMP buttons.</p>
+    </div>
+  </div>
+
+  <div id="pause-menu" class="overlay" hidden>
+    <div class="panel">
+      <h2>Paused</h2>
+      <div class="settings">
+        <label class="setting">
+          <span>Render distance</span>
+          <input id="setting-distance" type="range" min="3" max="14" step="1">
+          <b id="setting-distance-value">6 chunks</b>
+        </label>
+        <label class="setting">
+          <span>Field of view</span>
+          <input id="setting-fov" type="range" min="55" max="105" step="1">
+          <b id="setting-fov-value">78°</b>
+        </label>
+        <label class="setting">
+          <span>Mouse sensitivity</span>
+          <input id="setting-sensitivity" type="range" min="1" max="8" step="0.5">
+          <b id="setting-sensitivity-value">0.0022</b>
+        </label>
+        <label class="setting">
+          <span>Time of day</span>
+          <input id="setting-time" type="range" min="0" max="1" step="0.01">
+          <b id="setting-time-value">07:12</b>
+        </label>
+        <label class="setting check">
+          <input id="setting-cycle" type="checkbox">
+          <span>Day and night cycle</span>
+        </label>
+        <label class="setting check">
+          <input id="setting-sound" type="checkbox">
+          <span>Sound effects</span>
+        </label>
+        <label class="setting check">
+          <input id="setting-creative" type="checkbox">
+          <span>Creative mode (instant dig, fly with F)</span>
+        </label>
+      </div>
+      <div class="row">
+        <button id="resume-button" class="primary-button" type="button">Resume <span>→</span></button>
+        <button id="help-button" class="chip" type="button">How to play</button>
+      </div>
+      <div class="row world-row">
+        <span class="muted">New world seed (blank = random)</span>
+        <input id="seed-input" type="text" inputmode="text" autocomplete="off" placeholder="random">
+        <button id="new-world-button" class="chip danger" type="button">Generate</button>
+      </div>
+      <p class="hint">Every new world gets its own seed, so no two are the same. Share a seed to share a world.</p>
+    </div>
+  </div>
+
+  <div id="help-panel" class="overlay" hidden>
+    <div class="panel">
+      <h2>How to play</h2>
+      <ul class="help-list">
+        <li><b>Move</b> with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <b>look</b> with the mouse.</li>
+        <li><b>Dig</b> by holding left click on a block; <b>place</b> with right click.</li>
+        <li><b>Pick a block</b> with the <b>middle mouse button</b>, or press <kbd>1</kbd>–<kbd>9</kbd>.</li>
+        <li><b>E</b> flips to the second page of blocks (glass, bricks, glowstone and friends).</li>
+        <li><b>Space</b> jumps; tap it twice to fly, <b>Shift</b> sinks, <b>Ctrl</b> sprints.</li>
+        <li><b>V</b> switches between first and third person.</li>
+        <li>Water is worth a swim; caves hide glowing stone.</li>
+        <li>Everything saves itself while you play.</li>
+      </ul>
+      <button id="help-close" class="primary-button" type="button">Got it <span>→</span></button>
+    </div>
+  </div>
+
+  <div id="loading">
+    <div class="loader">
+      <span></span><span></span><span></span>
+      <p id="loading-text">Growing a brand-new world…</p>
+    </div>
+  </div>
+
+  <script type="module" src="web/main.js"></script>
+</body>
+</html>
