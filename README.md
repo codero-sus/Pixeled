@@ -73,11 +73,27 @@ python3 -m http.server 8000
 Then visit <http://localhost:8000>. Add `?seed=1234` to replay a specific world; progress is saved in
 browser local storage (`pixeled-voxel-v2`).
 
-**Controls:** click to lock the pointer, `W A S D` to walk, `Space` to jump, `Shift` to sprint,
-`F` to fly, left click to mine, right click to place, middle click to pick a block, `1`–`9` and the
-mouse wheel to choose one, `N` for a new random world, `T` to skip time, `P` for a screenshot,
-`H` for help, `Esc` to release the pointer. On touch devices there is a joystick, a drag-look area,
-and MINE / PLACE / JUMP buttons.
+### The start screen
+
+The game opens on a title screen in the spirit of Minecraft and bloxd: the logo, a swinging splash,
+and the world already turning slowly behind it as a panorama. From there you can **Play**, roll a
+**New world**, **Play a seed** you liked, open **How to play**, or flip the **Sound**. `Esc` (or the
+☰ button) brings the same screen back as a pause menu, and everything is saved as you go.
+
+### Controls
+
+`W A S D` walk · `Space` jump · `Shift` sprint · `F` fly · left click mine · right click build ·
+middle click pick a block · `1`–`9` or the wheel choose one · `N` new random world · `T` skip time ·
+`P` screenshot · `H` help · `Esc` menu.
+
+The mouse works in two ways and the game is fully playable in both. Normally the first click
+*captures* the pointer (an invisible cursor, like Minecraft) — hold a button to mine or build
+continuously. If the browser refuses to capture it, as happens when the game runs inside an embedded
+frame that was not granted the pointer-lock permission, it quietly switches to **drag to look**: hold
+a button and move to turn, let go of a quick click to mine, right click to build. A toast explains
+the switch, and the menu says `Drag to look`.
+
+On touch devices there is a joystick, a drag-look area, and MINE / PLACE / JUMP buttons.
 
 ## Python edition
 
@@ -111,10 +127,15 @@ shot.png` for a headless screenshot. Progress is saved in `~/.pixeled/world.txt`
 All three headless suites run in CI on every push (`.github/workflows/tests.yml`):
 
 ```bash
-node tests/web_smoke.mjs          # web modules with a stubbed DOM — chunk meshing, digging, saving
+node tests/web_smoke.mjs          # web modules with a stubbed DOM — menu, meshing, digging, saving
+node tests/web_dom_smoke.mjs      # boots the game against the real index.html markup
 python3 tests/python_smoke.py     # 25 checks: noise parity, world gen, physics, renderer, HUD, save
 javac -d out java/pixeled/*.java && java -Djava.awt.headless=true -cp out pixeled.Smoke
 ```
+
+`web_dom_smoke.mjs` reads the id list out of `index.html` and makes `getElementById` return null for
+anything else, so the start screen cannot silently lose a button the code expects; it then plays
+through the menu, pauses, drags to look and replays a typed seed.
 
 The Rockz core (everything except the Android `View`/`Activity` glue) is compiled and tested by the
 same workflow without needing an emulator.

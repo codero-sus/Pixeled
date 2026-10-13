@@ -129,11 +129,18 @@ class StubElement {
     this.innerHTML = '';
     this.clientWidth = 960;
     this.clientHeight = 600;
+    this.attributes = new Set();
+    const classes = new Set();
     this.classList = {
-      toggle: () => {},
-      add: () => {},
-      remove: () => {},
-      contains: () => false,
+      toggle: (name, force) => {
+        const wanted = force === undefined ? !classes.has(name) : Boolean(force);
+        if (wanted) classes.add(name); else classes.delete(name);
+        return wanted;
+      },
+      add: name => classes.add(name),
+      remove: name => classes.delete(name),
+      contains: name => classes.has(name),
+      get length() { return classes.size; },
     };
   }
   addEventListener(type, handler) {
@@ -147,7 +154,11 @@ class StubElement {
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
-  setAttribute(name, value) { this[name] = value; }
+  setAttribute(name, value) { this.attributes.add(name); this[name] = value; }
+  removeAttribute(name) { this.attributes.delete(name); }
+  hasAttribute(name) { return this.attributes.has(name); }
+  getAttribute(name) { return this.attributes.has(name) ? this[name] : null; }
+  querySelector() { return null; }
   focus() {}
   requestPointerLock() {}
   requestFullscreen() { return Promise.resolve(); }
@@ -197,6 +208,13 @@ const touchButtons = ['jump', 'mine', 'place', 'fly'].map(action => {
 });
 
 const storage = new Map();
+const documentListeners = new Map();
+function onDocument(type, event = {}) {
+  const handlers = documentListeners.get(type) ?? [];
+  for (const handler of handlers) handler({ preventDefault() {}, stopPropagation() {}, ...event });
+  return handlers.length;
+}
+
 globalThis.document = {
   getElementById(id) {
     if (!elements.has(id)) elements.set(id, new StubElement(id));
@@ -205,10 +223,15 @@ globalThis.document = {
   createElement: () => new StubElement(),
   querySelectorAll: selector => (selector === '[data-touch-action]' ? touchButtons : []),
   querySelector: () => new StubElement('game-frame'),
-  addEventListener() {},
+  addEventListener(type, handler) {
+    if (!documentListeners.has(type)) documentListeners.set(type, []);
+    documentListeners.get(type).push(handler);
+  },
   fullscreenElement: null,
   exitFullscreen() {},
+  exitPointerLock() {},
   pointerLockElement: null,
+  body: new StubElement('body'),
 };
 globalThis.localStorage = {
   getItem: key => (storage.has(key) ? storage.get(key) : null),
@@ -227,7 +250,8 @@ globalThis.window = {
   setInterval: () => 0,
   confirm: () => true,
 };
-globalThis.location = { search: '', origin: 'http://localhost:8000', pathname: '/' };
+// A fixed ?seed= makes the world (and therefore this test) reproducible.
+globalThis.location = { search: '?seed=2408', origin: 'http://localhost:8000', pathname: '/' };
 try {
   Object.defineProperty(globalThis.navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
 } catch (_) { /* clipboard is optional for the test */ }
@@ -247,12 +271,17 @@ function step(frames = 1, milliseconds = 16) {
   }
 }
 
+const press = code => (windowListeners.get('keydown') ?? []).forEach(handler => handler({ code, preventDefault() {} }));
+const release = code => (windowListeners.get('keyup') ?? []).forEach(handler => handler({ code }));
+
 // =============================================================== the whole game
 
 const { PixeledGame } = await import('../web/main.js');
 const game = new PixeledGame(canvas);
 
 assert.equal(elements.get('hotbar').children.length, 9, 'nine blocks in the hotbar');
+
+
 assert.ok(game.world instanceof VoxelWorld, 'a world was generated');
 assert.ok(game.renderer.pending.length === 64, `all 64 chunks are queued for meshing (${game.renderer.pending.length})`);
 assert.ok(glStub.stats.programs >= 3, 'sky, terrain and highlight shaders compiled');
@@ -261,7 +290,39 @@ step(40);
 assert.ok(game.renderer.meshes.size > 20, `chunks were meshed (${game.renderer.meshes.size})`);
 assert.ok(glStub.stats.draws > 0, 'the renderer draws every frame');
 assert.ok(game.loaded, 'loading finished');
-assert.ok(elements.get('hud-fps').textContent.length > 0, 'the HUD is updated');
+
+// --- the start screen is up before anything else, and the world builds behind it
+assert.equal(game.paused, true, 'the game starts on the start screen');
+assert.equal(game.menu.isOpen, true, 'the menu reports itself open');
+assert.equal(elements.get('menu').classList.contains('hidden'), false, 'the menu is visible');
+assert.ok(elements.get('menu-play'), 'the menu has a Play button');
+assert.ok(elements.get('menu-splash').textContent.length > 0, 'the splash text is set');
+assert.equal(elements.get('menu-world').textContent.includes(String(game.world.seed)), true,
+  'the menu shows the seed of the world behind it');
+step(10);
+assert.ok(elements.get('menu-controls').textContent.includes('WASD'), 'the menu lists the controls');
+game.menu.setLookMode(true);
+assert.ok(elements.get('menu-controls').textContent.startsWith('Drag to look'), 'and explains drag-to-look when capture is blocked');
+
+const pausedStart = { x: game.player.x, z: game.player.z };
+press('KeyW');
+step(20);
+release('KeyW');
+assert.equal(game.player.x, pausedStart.x, 'movement keys do nothing while the menu is open');
+assert.equal(game.player.z, pausedStart.z, 'and the player stays put');
+assert.ok(game.panorama > 0, 'the camera turns slowly behind the menu');
+
+// --- Enter and the Play button both start the game
+press('Enter');
+assert.equal(game.paused, false, 'Enter leaves the start screen');
+assert.equal(game.menu.isOpen, false, 'and the menu closes');
+game.pause(true);
+assert.equal(game.paused, true, 'Escape opens the pause screen');
+elements.get('menu-play').emit('click');
+assert.equal(game.paused, false, 'the Play button resumes the game');
+
+step(24);   // the status panel refreshes every quarter second
+assert.ok(document.getElementById('hud-fps').textContent.length > 0, 'the HUD is updated once play starts');
 
 // --- mine the block the crosshair is aiming at, and check the mesh is rebuilt
 game.player.pitch = -1.2;
@@ -283,6 +344,49 @@ assert.ok(game.world.edits.size >= 1, 'building records an edit');
 const placed = [...game.world.edits.values()].some(id => id === 8);
 assert.ok(placed || game.world.get(hit.x, hit.y, hit.z) !== AIR, 'a block was placed');
 
+// --- pointer capture can be refused (embedded frames); dragging must still look and click
+game.input.pointerLocked = false;
+game.player.yaw = 0;
+const dragYawBefore = game.player.yaw;
+canvas.emit('mousedown', { button: 0, clientX: 100, clientY: 100 });
+onDocument('mousemove', { movementX: 40, movementY: 0 });
+step(1);
+assert.ok(Math.abs(game.player.yaw - dragYawBefore) > 0.01, 'dragging with the button held looks around');
+onDocument('mouseup', { button: 0 });
+assert.equal(game.input.mining, false, 'a drag does not keep mining');
+
+// Aim straight down over untouched ground, so a click has a fresh block to remove.
+const clickSpawn = game.world.spawnPoint();
+game.player.x = Math.floor(clickSpawn.x) + 0.5;
+game.player.z = Math.floor(clickSpawn.z) + 0.5;
+game.player.y = game.world.surfaceHeight(Math.floor(game.player.x), Math.floor(game.player.z)) + 4;  // inside REACH
+game.player.pitch = -1.2;
+const clickTarget = game.target();
+assert.ok(clickTarget && clickTarget.id !== AIR, 'aiming straight down finds solid ground');
+canvas.emit('mousedown', { button: 0, clientX: 100, clientY: 100 });
+onDocument('mouseup', { button: 0 });
+assert.equal(game.world.get(clickTarget.x, clickTarget.y, clickTarget.z), AIR,
+  'a click with no drag mines the aimed block');
+
+// And a right click builds into the cell it just cleared.
+game.selectHotbar(2);
+game.player.pitch = -1.2;
+const buildTarget = game.target();
+assert.ok(buildTarget, 'there is still ground in reach to build against');
+const buildCell = placementCell(buildTarget);
+canvas.emit('mousedown', { button: 2, clientX: 100, clientY: 100 });
+onDocument('mouseup', { button: 2 });
+assert.equal(game.world.get(buildCell.x, buildCell.y, buildCell.z), STONE,
+  'a right click with no drag builds the selected block');
+// A refused capture flips the input layer into drag mode and tells the player how to look.
+game.input.pointerLocked = false;
+game.input.dragLook = false;
+game.input.enableDragLook();
+assert.equal(game.input.dragLook, true, 'a refused pointer lock switches to drag-to-look');
+assert.ok(elements.get('menu-controls').textContent.startsWith('Drag to look'), 'and the menu says so');
+game.input.pointerLocked = true;       // back to captured mode for the rest of the run
+game.input.dragLook = false;
+
 // --- flying, walking and looking
 game.player.flying = true;
 game.player.flying = false;
@@ -290,8 +394,6 @@ game.toggleFly();
 assert.equal(game.player.flying, true, 'fly toggles on');
 game.toggleFly();
 
-const press = code => (windowListeners.get('keydown') ?? []).forEach(handler => handler({ code, preventDefault() {} }));
-const release = code => (windowListeners.get('keyup') ?? []).forEach(handler => handler({ code }));
 const startX = game.player.x, startZ = game.player.z;
 press('KeyW');
 step(30);
