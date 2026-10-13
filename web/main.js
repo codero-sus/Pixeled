@@ -10,6 +10,7 @@ import { Audio } from './audio.js';
 import { Input } from './input.js';
 import { Player } from './player.js';
 import { Renderer } from './renderer.js';
+import { StartMenu } from './menu.js';
 import { BrowserSave, randomSeed, seedFromLocation } from './storage.js';
 import { Ui } from './ui.js';
 import { VoxelWorld } from './world.js';
@@ -36,13 +37,18 @@ export class PixeledGame {
     this.fps = 0;
     this.loaded = false;
     this.statusTimer = 0;
+    this.paused = true;          // the start screen is up until the player presses Play
+    this.panorama = 0;           // seconds the menu camera has been turning
+    this.viewYaw = 0;            // the player's own view, restored when the game resumes
+    this.viewPitch = 0;
 
     this.ui = new Ui({
       newWorld: () => this.newWorld(),
       toggleFly: () => this.toggleFly(),
       toggleHelp: () => this.ui.setHelp(document.getElementById('help-modal').hidden),
+      openMenu: () => this.pause(true),
       fullscreen: () => this.toggleFullscreen(),
-      toggleSound: () => this.audio.toggle(),
+      toggleSound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu?.setSound(enabled); return enabled; },
       selectHotbar: index => this.selectHotbar(index),
     });
 
@@ -51,13 +57,15 @@ export class PixeledGame {
       onPlace: () => this.build(),
       onPick: () => this.pickBlock(),
       toggleFly: () => this.toggleFly(),
-      toggleHelp: () => this.ui.setHelp(true),
       closeHelp: () => this.ui.setHelp(false),
+      onEscape: () => this.escape(),
+      onKey: code => Boolean(this.menu?.onKey(code)),
+      onLookFallback: () => this.dragLookNotice(),
       selectHotbar: index => this.selectHotbar(index),
       scrollHotbar: direction => this.selectHotbar((this.selected + direction + HOTBAR.length) % HOTBAR.length),
       onLockChange: locked => {
         if (locked) this.ui.fadeHint();
-        document.getElementById('start-hint')?.classList.toggle('hidden', locked || this.input.isTouch);
+        document.getElementById('start-hint')?.classList.toggle('hidden', locked || this.paused || this.input.isTouch);
       },
     });
 
@@ -65,6 +73,18 @@ export class PixeledGame {
     const seed = seedFromLocation() ?? (this.saved ? this.saved.seed : randomSeed());
     this.createWorld(seed, this.saved && this.saved.seed === seed);
     this.ui.setSound(this.audio.enabled);
+
+    this.menu = new StartMenu({
+      play: () => this.resume(),
+      resume: () => this.resume(),
+      fresh: () => { this.newWorld(); this.resume(); },
+      seed: value => { this.startSeed(value); },
+      help: () => { this.ui.setHelp(true); },
+      sound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu.setSound(enabled); return enabled; },
+    });
+    this.menu.setSound(this.audio.enabled);
+    this.menu.setWorld({ seed: this.world.seed, hasSave: Boolean(this.saved), edits: this.world.edits.size });
+    this.menu.show(false);
 
     window.addEventListener('resize', () => this.renderer.resize());
     window.addEventListener('beforeunload', () => this.save());
@@ -91,7 +111,8 @@ export class PixeledGame {
     this.total = this.renderer.requestAllChunks();
     this.remaining = this.total;
     this.loaded = false;
-    this.ui.loading({ show: true, progress: 0, message: 'Carving hills, caves and trees…' });
+    this.ui.loading({ show: !this.paused, progress: 0, message: 'Carving hills, caves and trees…' });
+    this.menu?.setWorld({ seed: this.world.seed, hasSave: Boolean(this.saved), edits: this.world.edits.size });
   }
 
   newWorld() {
@@ -100,6 +121,69 @@ export class PixeledGame {
     this.saved = null;
     this.createWorld(randomSeed(), false);
     this.ui.toast('Brand new world — every seed is different');
+  }
+
+  /** Show the start or pause screen and hand the cursor back. */
+  pause(paused = false) {
+    this.paused = true;
+    this.panorama = 0;
+    this.viewYaw = this.player.yaw;
+    this.viewPitch = this.player.pitch;
+    this.save();
+    this.input.enabled = false;
+    this.input.release();
+    this.ui.setHelp(false);
+    this.ui.loading({ show: false });
+    this.menu.show(paused);
+    document.getElementById('start-hint')?.classList.add('hidden');
+  }
+
+  /** Leave the menu and take control of the player again. */
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.player.yaw = this.viewYaw;
+    this.player.pitch = this.viewPitch;
+    this.input.enabled = true;
+    this.menu.hide();
+    this.ui.setHelp(false);
+    this.ui.loading({
+      show: !this.loaded,
+      message: this.loaded ? '' : `Building terrain… ${Math.round((1 - this.remaining / (this.total || 1)) * 100)}%`,
+    });
+    if (!this.input.isTouch) {
+      this.input.requestLock();
+      document.getElementById('start-hint')?.classList.toggle('hidden', this.input.pointerLocked);
+    }
+  }
+
+  /** Play a world from an explicit seed typed into the menu. */
+  startSeed(seed) {
+    this.save();
+    this.storage.clear();
+    this.saved = null;
+    this.createWorld(seed, false);
+    this.ui.toast(`World ${seed} — same seed always grows the same hills`);
+    this.resume();
+  }
+
+  /** Escape closes help, then toggles the menu. */
+  escape() {
+    const help = document.getElementById('help-modal');
+    if (help && !help.hidden) { this.ui.setHelp(false); return; }
+    if (this.paused) this.resume();
+    else this.pause(true);
+  }
+
+  /**
+   * The browser would not capture the pointer — usually because the game is inside an embedded
+   * frame. Dragging now looks around, and clicks still dig and build.
+   */
+  dragLookNotice() {
+    this.menu?.setLookMode(true);
+    this.ui.setHint('Drag with the mouse to look around');
+    if (!this.paused && !this.loaded) return;
+    if (!this.input.isTouch) this.ui.toast('Mouse capture is blocked here — drag to look', 3600);
   }
 
   toggleFly() {
@@ -174,6 +258,38 @@ export class PixeledGame {
     const dt = Math.min(1 / 30, Math.max(0, (now - this.lastFrame) / 1000)) || 1 / 60;
     this.lastFrame = now;
 
+    // Keep building the world while the menu is up, so Play drops straight into a finished scene.
+    if (!this.loaded) {
+      const remaining = this.renderer.buildPending(this.world, 3);
+      this.remaining = this.renderer.pending.length;
+      this.ui.loading({
+        show: !this.paused,
+        progress: this.total ? 1 - this.remaining / this.total : 1,
+        message: `Building terrain… ${Math.round((1 - this.remaining / (this.total || 1)) * 100)}%`,
+      });
+      if (!remaining) {
+        this.loaded = true;
+        this.ui.loading({ show: false });
+      }
+    } else if (this.renderer.pending.length) {
+      this.renderer.buildPending(this.world, 2);
+    }
+
+    if (this.paused) {
+      // A slow turn of the camera makes the start screen a living panorama, like Minecraft's.
+      this.panorama += dt;
+      this.player.yaw = this.viewYaw + this.panorama * 0.045;
+      this.player.pitch = -0.16 + Math.sin(this.panorama * 0.25) * 0.05;
+      this.clock = (this.clock + dt / (DAY_SECONDS * 6)) % 1;
+      this.input.takeLook();
+      this.renderer.render({
+        world: this.world, player: this.player, target: null,
+        time: now / 1000, clock: this.clock, fov: this.fov,
+      });
+      requestAnimationFrame(next => this.frame(next));
+      return;
+    }
+
     const look = this.input.takeLook();
     if (look.x || look.y) this.player.look(look.x * MOUSE_SENSITIVITY, look.y * MOUSE_SENSITIVITY);
 
@@ -192,22 +308,6 @@ export class PixeledGame {
     this.lastDig += dt; this.lastPlace += dt;
     if (this.input.mining && this.lastDig > ACTION_REPEAT) { this.lastDig = 0; this.mine(); }
     if (this.input.placing && this.lastPlace > ACTION_REPEAT) { this.lastPlace = 0; this.build(); }
-
-    if (!this.loaded) {
-      const remaining = this.renderer.buildPending(this.world, 3);
-      this.remaining = this.renderer.pending.length;
-      this.ui.loading({
-        show: true,
-        progress: this.total ? 1 - this.remaining / this.total : 1,
-        message: `Building terrain… ${Math.round((1 - this.remaining / (this.total || 1)) * 100)}%`,
-      });
-      if (!remaining) {
-        this.loaded = true;
-        this.ui.loading({ show: false });
-      }
-    } else if (this.renderer.pending.length) {
-      this.renderer.buildPending(this.world, 2);
-    }
 
     const target = this.target();
     this.renderer.render({

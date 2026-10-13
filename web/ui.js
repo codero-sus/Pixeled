@@ -12,6 +12,7 @@ export class Ui {
     this.buildHotbar();
     document.getElementById('new-world')?.addEventListener('click', () => callbacks.newWorld?.());
     document.getElementById('open-help')?.addEventListener('click', () => this.setHelp(true));
+    document.getElementById('open-menu')?.addEventListener('click', () => callbacks.openMenu?.());
     document.getElementById('close-help')?.addEventListener('click', () => this.setHelp(false));
     document.getElementById('got-it')?.addEventListener('click', () => this.setHelp(false));
     document.getElementById('help-modal')?.addEventListener('click', event => {
@@ -50,8 +51,6 @@ export class Ui {
 
   setFly(flying) {
     document.getElementById('toggle-fly')?.classList.toggle('active', flying);
-    const hint = document.getElementById('fly-hint');
-    if (hint) hint.textContent = flying ? 'Flying' : 'Walking';
   }
 
   setSound(enabled) {
@@ -104,6 +103,16 @@ export class Ui {
     if (bar) bar.style.width = `${Math.round(progress * 100)}%`;
     const text = document.getElementById('loading-text');
     if (text && message) text.textContent = message;
+  }
+
+  /** The line under "Click to play" — also used to explain drag-to-look. */
+  setHint(text) {
+    const hint = document.getElementById('start-hint');
+    if (!hint) return;
+    const detail = hint.querySelector?.('span') ?? null;
+    if (detail) detail.textContent = text;
+    else hint.innerHTML = `<b>Click to play</b><span>${text}</span>`;
+    hint.classList.remove('hidden');
   }
 
   fadeHint() {

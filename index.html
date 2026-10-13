@@ -33,6 +33,7 @@
       <button id="toggle-sound" type="button" title="Sound on or off">♪</button>
       <button id="toggle-fly" type="button" title="Fly (F)">✈</button>
       <button id="open-help" type="button" title="Controls (H)">?</button>
+      <button id="open-menu" type="button" title="Menu (Esc)">☰</button>
       <button id="toggle-fullscreen" type="button" title="Fullscreen">⛶</button>
       <button id="new-world" type="button" class="primary" title="Generate a brand new random world">↻ New world</button>
     </div>
@@ -57,6 +58,51 @@
       <button class="touch-button round" data-touch-action="jump" type="button">↑</button>
       <button class="touch-button round" data-touch-action="fly" type="button">✈</button>
     </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- start screen -->
+  <div class="overlay menu hidden" id="menu">
+    <div class="menu-wash" aria-hidden="true"></div>
+    <section class="menu-card">
+      <header class="menu-head">
+        <h1 class="menu-logo" id="menu-title">PIXELED</h1>
+        <p class="menu-splash" id="menu-splash">A brand new world every time!</p>
+      </header>
+      <p class="menu-subtitle" id="menu-subtitle">A first-person 3D block sandbox.</p>
+
+      <div class="menu-buttons">
+        <button class="menu-button primary" id="menu-play" type="button">
+          <span class="menu-button-label" id="menu-play-label">Play</span>
+          <span class="menu-button-sub" id="menu-play-sub">Start building</span>
+        </button>
+        <button class="menu-button" id="menu-continue" type="button" hidden>
+          <span class="menu-button-label">Continue</span>
+          <span class="menu-button-sub" id="menu-continue-sub">Saved world</span>
+        </button>
+        <button class="menu-button" id="menu-fresh" type="button">
+          <span class="menu-button-label">New world</span>
+          <span class="menu-button-sub">Roll another random seed</span>
+        </button>
+        <button class="menu-button" id="menu-seed-toggle" type="button">
+          <span class="menu-button-label">Play a seed…</span>
+          <span class="menu-button-sub">Replay a world you liked</span>
+        </button>
+        <div class="menu-seed-row" id="menu-seed-row" hidden>
+          <input id="menu-seed-input" type="text" inputmode="numeric" autocomplete="off" placeholder="seed, e.g. 2408" aria-label="World seed">
+          <button class="menu-go" id="menu-seed-go" type="button">Go</button>
+        </div>
+        <div class="menu-small">
+          <button class="menu-chip" id="menu-help" type="button">How to play</button>
+          <button class="menu-chip" id="menu-sound" type="button">Sound: on</button>
+        </div>
+      </div>
+
+      <footer class="menu-foot">
+        <span class="menu-seedline" id="menu-world">seed —</span>
+        <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
+      </footer>
+    </section>
+    <div class="menu-version">Pixeled 3D · v3.0</div>
   </div>
 
   <!-- ------------------------------------------------------------- loading screen -->

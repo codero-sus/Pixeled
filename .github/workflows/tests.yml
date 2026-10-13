@@ -23,6 +23,8 @@ jobs:
           node-version: '20'
       - name: Web modules smoke test
         run: node tests/web_smoke.mjs
+      - name: Web boot test against the real markup
+        run: node tests/web_dom_smoke.mjs
 
   python:
     name: Python edition

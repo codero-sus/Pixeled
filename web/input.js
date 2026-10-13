@@ -1,7 +1,21 @@
 /**
- * Input for desktop and touch: pointer-lock mouse look, WASD movement, hotbar keys and wheel on
- * desktop; a thumb-stick, drag-to-look and action buttons on phones and tablets.
+ * Input for desktop and touch: mouse look, WASD movement, hotbar keys and wheel on desktop; a
+ * thumb-stick, drag-to-look and action buttons on phones and tablets.
+ *
+ * Mouse look has two modes, and the game is fully playable in both:
+ *
+ *   * **captured** — the pointer is locked, the crosshair follows the mouse directly, and holding a
+ *     button digs or builds repeatedly.
+ *   * **drag** — the browser refused to capture the pointer (this happens inside an iframe that was
+ *     not given the pointer-lock permission, which is how the game is embedded in some previews).
+ *     Then dragging moves the view, a quick left click digs, a quick right click builds, and a
+ *     middle click picks — the same as captured mode, minus the invisible cursor.
+ *
+ * `enabled` gates gameplay input while the start/pause menu is up.
  */
+
+const DRAG_THRESHOLD = 5;        // pixels of movement before a click counts as a drag
+const CLICK_MILLISECONDS = 400;  // a press shorter than this with no drag is a click
 
 export class Input {
   constructor(canvas, callbacks = {}) {
@@ -14,6 +28,9 @@ export class Input {
     this.placing = false;
     this.jumpQueued = false;
     this.pointerLocked = false;
+    this.dragLook = false;         // pointer capture unavailable: dragging looks around
+    this.enabled = true;
+    this.press = null;             // { button, x, y, moved, time } while a button is held
     this.touch = { active: false, moveId: null, lookId: null, originX: 0, originY: 0, x: 0, y: 0, radius: 62 };
     this.move = { x: 0, y: 0 };
 
@@ -29,20 +46,22 @@ export class Input {
   bindKeyboard() {
     window.addEventListener('keydown', event => {
       const code = event.code;
+      if (code === 'Escape') { this.callbacks.onEscape?.(); return; }
+      if (this.callbacks.onKey?.(code)) return;      // the start screen owns Enter and friends
+      if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();
       if (this.keys.has(code)) return;
       this.keys.add(code);
       if (code === 'Space') this.jumpQueued = true;
       if (code === 'KeyF') this.callbacks.toggleFly?.();
       if (code === 'KeyH') this.callbacks.toggleHelp?.();
-      if (code === 'Escape') this.callbacks.closeHelp?.();
       if (code.startsWith('Digit')) {
         const index = Number(code.slice(5));
         if (index >= 1 && index <= 9) this.callbacks.selectHotbar?.(index - 1);
       }
     });
     window.addEventListener('keyup', event => this.keys.delete(event.code));
-    window.addEventListener('blur', () => { this.keys.clear(); this.mining = this.placing = false; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.mining = this.placing = false; this.press = null; });
   }
 
   // ------------------------------------------------------------------ mouse
@@ -50,32 +69,109 @@ export class Input {
   bindMouse() {
     const canvas = this.canvas;
     canvas.addEventListener('contextmenu', event => event.preventDefault());
+
     canvas.addEventListener('mousedown', event => {
+      if (!this.enabled) return;
+      if (event.button > 2) return;
+      if (event.button === 1) event.preventDefault();
+      this.press = { button: event.button, x: event.clientX ?? 0, y: event.clientY ?? 0, moved: false, time: Date.now() };
+
       if (!this.pointerLocked) {
-        if (event.button === 0 || event.button === 2) canvas.requestPointerLock?.();
+        // Ask for capture; if the browser refuses we simply fall back to dragging. The click is
+        // interpreted on mouseup, once we know whether it was a click or the start of a drag.
+        this.requestLock();
         return;
       }
-      if (event.button === 0) { this.mining = true; this.callbacks.onDig?.(); }
-      else if (event.button === 2) { this.placing = true; this.callbacks.onPlace?.(); }
-      else if (event.button === 1) { event.preventDefault(); this.callbacks.onPick?.(); }
+      this.act(event.button);
     });
-    window.addEventListener('mouseup', event => {
+
+    document.addEventListener('mousemove', event => {
+      const movementX = event.movementX || 0;
+      const movementY = event.movementY || 0;
+      if (this.pointerLocked) {
+        this.lookX += movementX;
+        this.lookY += movementY;
+        return;
+      }
+      if (!this.press || !this.enabled) return;
+      // Drag-to-look: browsers report movementX/Y on ordinary moves too, so use it when it is
+      // there and fall back to the cursor moving across the canvas.
+      let dx = movementX, dy = movementY;
+      if (!dx && !dy && this.press.x) {
+        dx = (event.clientX ?? this.press.x) - this.press.x;
+        dy = (event.clientY ?? this.press.y) - this.press.y;
+        this.press.x = event.clientX ?? this.press.x;
+        this.press.y = event.clientY ?? this.press.y;
+      }
+      if (!this.press.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD && !this.press.dragged) return;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD && !this.press.moved) return;
+      this.press.moved = true;
+      this.lookX += dx;
+      this.lookY += dy;
+    });
+
+    document.addEventListener('mouseup', event => {
+      const press = this.press;
+      this.press = null;
       if (event.button === 0) this.mining = false;
       if (event.button === 2) this.placing = false;
+      if (!this.enabled || !press || press.button !== event.button) return;
+      if (this.pointerLocked) return;
+      if (press.moved) return;                                  // that was a look, not a click
+      if (Date.now() - press.time > CLICK_MILLISECONDS) return;  // a slow press is not a click
+      this.act(event.button);
     });
+
     document.addEventListener('pointerlockchange', () => {
-      this.pointerLocked = document.pointerLockElement === canvas;
+      this.pointerLocked = document.pointerLockElement === this.canvas;
+      if (this.pointerLocked) this.dragLook = false;
       this.callbacks.onLockChange?.(this.pointerLocked);
     });
-    document.addEventListener('mousemove', event => {
-      if (!this.pointerLocked) return;
-      this.lookX += event.movementX || 0;
-      this.lookY += event.movementY || 0;
-    });
+    document.addEventListener('pointerlockerror', () => this.enableDragLook());
+
     canvas.addEventListener('wheel', event => {
+      if (!this.enabled) return;
       event.preventDefault();
       this.callbacks.scrollHotbar?.(Math.sign(event.deltaY));
     }, { passive: false });
+  }
+
+  /** Dig, build or pick with the given mouse button. */
+  act(button) {
+    if (button === 0) { this.mining = true; this.callbacks.onDig?.(); }
+    else if (button === 2) { this.placing = true; this.callbacks.onPlace?.(); }
+    else if (button === 1) this.callbacks.onPick?.();
+  }
+
+  /**
+   * Ask the browser to capture the pointer. Chrome returns a promise that rejects when an embedded
+   * frame is not allowed to capture; Safari throws instead; some browsers just do nothing. All
+   * three end up in the same place: drag-to-look.
+   */
+  requestLock() {
+    if (this.pointerLocked || this.dragLook) return this.pointerLocked;
+    try {
+      const result = this.canvas.requestPointerLock?.();
+      if (result && typeof result.catch === 'function') result.catch(() => this.enableDragLook());
+    } catch (_) {
+      this.enableDragLook();
+    }
+    // Verification: if nothing happened shortly afterwards, capture is blocked here.
+    setTimeout(() => {
+      if (!this.pointerLocked && document.pointerLockElement !== this.canvas) this.enableDragLook();
+    }, 350);
+    return true;
+  }
+
+  enableDragLook() {
+    if (this.dragLook) return;
+    this.dragLook = true;
+    this.callbacks.onLookFallback?.();
+  }
+
+  /** Leave captured mode (the menu needs the cursor back). */
+  release() {
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock?.();
   }
 
   // ------------------------------------------------------------------ touch
@@ -83,7 +179,7 @@ export class Input {
   bindTouch() {
     const canvas = this.canvas;
     const start = event => {
-      if (event.pointerType === 'mouse') return;
+      if (event.pointerType === 'mouse' || !this.enabled) return;
       this.touch.active = true;
       for (const touch of event.changedTouches ?? [event]) this.beginTouch(touch, event.target === canvas);
       event.preventDefault?.();
@@ -93,6 +189,7 @@ export class Input {
       const action = button.dataset.touchAction;
       button.addEventListener('touchstart', event => {
         event.preventDefault();
+        if (!this.enabled) return;
         this.touch.active = true;
         if (action === 'jump') this.jumpQueued = true;
         if (action === 'mine') { this.mining = true; this.callbacks.onDig?.(); }
@@ -178,6 +275,7 @@ export class Input {
 
   /** Movement intent in the -1..1 range, merged from keys and the thumb-stick. */
   axes() {
+    if (!this.enabled) return { forward: 0, right: 0 };
     const keyboardForward = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
     const keyboardStrafe = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
     return {
@@ -193,7 +291,7 @@ export class Input {
   }
 
   takeJump() {
-    const jump = this.jumpQueued || this.keys.has('Space');
+    const jump = this.enabled && (this.jumpQueued || this.keys.has('Space'));
     this.jumpQueued = false;
     return jump;
   }
