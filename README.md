@@ -67,7 +67,8 @@ All four editions are generated from the same numbers, and `Smoke`/`Smoke`-style
 Open `index.html` directly, or serve the folder:
 
 ```bash
-python3 -m http.server 8000
+./tools/serve.sh            # binds 0.0.0.0:8000, safe to run twice
+python3 -m http.server 8000 # or the same thing by hand
 ```
 
 Then visit <http://localhost:8000>. Add `?seed=1234` to replay a specific world; progress is saved in
