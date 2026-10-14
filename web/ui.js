@@ -11,12 +11,12 @@ export class Ui {
     this.selected = 0;
     this.buildHotbar();
     document.getElementById('new-world')?.addEventListener('click', () => callbacks.newWorld?.());
-    document.getElementById('open-help')?.addEventListener('click', () => this.setHelp(true));
+    document.getElementById('open-help')?.addEventListener('click', () => this.requestHelp());
     document.getElementById('open-menu')?.addEventListener('click', () => callbacks.openMenu?.());
-    document.getElementById('close-help')?.addEventListener('click', () => this.setHelp(false));
-    document.getElementById('got-it')?.addEventListener('click', () => this.setHelp(false));
+    document.getElementById('close-help')?.addEventListener('click', () => this.requestCloseHelp());
+    document.getElementById('got-it')?.addEventListener('click', () => this.requestCloseHelp());
     document.getElementById('help-modal')?.addEventListener('click', event => {
-      if (event.target.id === 'help-modal') this.setHelp(false);
+      if (event.target.id === 'help-modal') this.requestCloseHelp();   // clicking the backdrop closes it
     });
     document.getElementById('toggle-fly')?.addEventListener('click', () => callbacks.toggleFly?.());
     document.getElementById('toggle-sound')?.addEventListener('click', () => this.setSound(callbacks.toggleSound?.()));
@@ -87,10 +87,23 @@ export class Ui {
     this.toastTimer = setTimeout(() => element.classList.remove('visible'), milliseconds);
   }
 
+  /** Open and close the help sheet through the game, which also parks the controls. */
+  requestHelp() {
+    if (this.callbacks.help) this.callbacks.help();
+    else this.setHelp(true);
+  }
+
+  requestCloseHelp() {
+    if (this.callbacks.closeHelp) this.callbacks.closeHelp();
+    else this.setHelp(false);
+  }
+
   setHelp(open) {
     const modal = document.getElementById('help-modal');
     if (!modal) return;
+    // Both the attribute and the class, so no stylesheet rule can leave the sheet stuck open.
     modal.hidden = !open;
+    modal.classList.toggle('hidden', !open);
     if (open) document.getElementById('got-it')?.focus();
   }
 

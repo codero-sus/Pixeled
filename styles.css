@@ -338,7 +338,17 @@ html, body {
   z-index: 5;
 }
 
+/* A class rule such as `.overlay { display: grid }` beats the browser's own
+   `[hidden] { display: none }`, which would leave an overlay stuck on screen. Make the attribute
+   authoritative so `element.hidden = true` always works. */
+[hidden] { display: none !important; }
+
 .overlay.hidden { display: none; }
+
+/* Stacking: the loading bar under the menu, the menu under the help sheet. */
+.overlay.loading { z-index: 10; }
+.overlay.menu { z-index: 20; }
+.overlay.modal { z-index: 30; }
 
 .card {
   width: min(560px, 94vw);

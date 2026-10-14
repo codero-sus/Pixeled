@@ -48,13 +48,14 @@ export class Input {
       const code = event.code;
       if (code === 'Escape') { this.callbacks.onEscape?.(); return; }
       if (this.callbacks.onKey?.(code)) return;      // the start screen owns Enter and friends
+      // Help toggles work even while the controls are parked, so H can close the sheet it opened.
+      if (code === 'KeyH') { this.callbacks.toggleHelp?.(); return; }
       if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();
       if (this.keys.has(code)) return;
       this.keys.add(code);
       if (code === 'Space') this.jumpQueued = true;
       if (code === 'KeyF') this.callbacks.toggleFly?.();
-      if (code === 'KeyH') this.callbacks.toggleHelp?.();
       if (code.startsWith('Digit')) {
         const index = Number(code.slice(5));
         if (index >= 1 && index <= 9) this.callbacks.selectHotbar?.(index - 1);

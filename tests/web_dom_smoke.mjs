@@ -13,10 +13,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const markup = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
 assert.deepEqual(duplicates, [], 'no duplicate ids in the markup');
 assert.ok(ids.includes('menu') && ids.includes('menu-play'), 'the markup defines the start screen');
+
+// A class rule like `.overlay { display: grid }` beats the browser's own `[hidden]` rule, which
+// once left the help sheet stuck over everything: `element.hidden = true` did nothing. The
+// stylesheet must make the attribute authoritative, and the overlays must stack in a known order.
+assert.match(stylesheet, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/, 'the hidden attribute wins over display rules');
+assert.match(stylesheet, /\.overlay\.loading\s*\{[^}]*z-index:\s*10/, 'loading sits under the menu');
+assert.match(stylesheet, /\.overlay\.menu\s*\{[^}]*z-index:\s*20/, 'the menu sits under the help sheet');
+assert.match(stylesheet, /\.overlay\.modal\s*\{[^}]*z-index:\s*30/, 'the help sheet is on top');
 
 // ---------------------------------------------------------------- faithful DOM
 
@@ -69,7 +78,17 @@ class Element {
   getBoundingClientRect() { return { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
 }
 
-const byId = new Map(ids.map(id => [id, new Element(id)]));
+// Reflect the markup's own attributes, so a `hidden` overlay starts hidden here too.
+const byId = new Map();
+for (const tag of markup.match(/<[a-z][^>]*>/gi) ?? []) {
+  const id = /\bid="([^"]+)"/.exec(tag)?.[1];
+  if (!id) continue;
+  const element = new Element(id);
+  if (/\shidden(\s|>|=)/.test(tag)) element.setAttribute('hidden', '');
+  const classes = /\bclass="([^"]*)"/.exec(tag)?.[1] ?? '';
+  for (const name of classes.split(/\s+/).filter(Boolean)) element.classList.add(name);
+  byId.set(id, element);
+}
 byId.set('game', Object.assign(new Element('game'), { getContext: () => glStub }));
 const canvas = byId.get('game');
 
@@ -160,6 +179,20 @@ assert.ok(game.loaded, 'the world finishes meshing while the menu is up');
 assert.ok(draws > 0, 'the panorama is rendering behind the menu');
 assert.ok(game.panorama > 0, 'and the camera is turning');
 
+// The help sheet starts hidden — the bug that made the game unplayable was that it did not.
+assert.equal(byId.get('help-modal').hasAttribute('hidden'), true, 'the help sheet starts hidden');
+assert.equal(byId.get('help-modal').classList.contains('hidden'), true, 'and hidden by class too');
+
+// Opening it from the menu, then closing it with the Let us build button, must land back on the menu.
+byId.get('menu-help').dispatch('click');
+assert.equal(byId.get('help-modal').hidden, false, 'How to play opens the sheet');
+assert.equal(game.paused, true, 'the game is still on the start screen behind the sheet');
+byId.get('got-it').dispatch('click');
+assert.equal(byId.get('help-modal').hidden, true, 'the Let us build button closes the sheet');
+assert.equal(byId.get('help-modal').classList.contains('hidden'), true, 'by class as well as by attribute');
+assert.equal(game.paused, true, 'and drops back to the start screen');
+assert.equal(byId.get('menu').classList.contains('hidden'), false, 'the menu is visible again');
+
 // Play: the button in the markup must resume the game, and the HUD must come back.
 byId.get('menu-play').dispatch('click');
 assert.equal(game.paused, false, 'the Play button starts the game');
@@ -184,6 +217,21 @@ const digTarget = game.target();
 canvas.dispatch('mousedown', { button: 0, clientX: 40, clientY: 40 });
 for (const handler of documentListeners.get('mouseup') ?? []) handler({ preventDefault() {}, button: 0 });
 assert.equal(game.world.get(digTarget.x, digTarget.y, digTarget.z), 0, 'a click without a drag mines the block');
+
+// While playing, the help sheet must park the controls (the pointer is captured, so its buttons
+// would otherwise be unclickable) and hand them back when it closes.
+byId.get('open-help').dispatch('click');
+assert.equal(byId.get('help-modal').hidden, false, 'the HUD button opens the sheet');
+assert.equal(game.input.enabled, false, 'controls are parked while the sheet is up');
+byId.get('got-it').dispatch('click');
+assert.equal(byId.get('help-modal').hidden, true, 'the Let us build button closes it during play');
+assert.equal(game.input.enabled, true, 'and the controls come back');
+
+// H toggles the same sheet.
+for (const handler of windowListeners.get('keydown') ?? []) handler({ code: 'KeyH', preventDefault() {} });
+assert.equal(byId.get('help-modal').hidden, false, 'H opens the sheet');
+for (const handler of windowListeners.get('keydown') ?? []) handler({ code: 'KeyH', preventDefault() {} });
+assert.equal(byId.get('help-modal').hidden, true, 'H closes it again');
 
 // Escape opens the pause screen, and Play takes you back.
 for (const handler of windowListeners.get('keydown') ?? []) handler({ code: 'Escape', preventDefault() {} });
