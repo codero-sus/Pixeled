@@ -45,7 +45,8 @@ export class PixeledGame {
     this.ui = new Ui({
       newWorld: () => this.newWorld(),
       toggleFly: () => this.toggleFly(),
-      toggleHelp: () => this.ui.setHelp(document.getElementById('help-modal').hidden),
+      help: () => this.openHelp(),
+      closeHelp: () => this.closeHelp(),
       openMenu: () => this.pause(true),
       fullscreen: () => this.toggleFullscreen(),
       toggleSound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu?.setSound(enabled); return enabled; },
@@ -57,7 +58,8 @@ export class PixeledGame {
       onPlace: () => this.build(),
       onPick: () => this.pickBlock(),
       toggleFly: () => this.toggleFly(),
-      closeHelp: () => this.ui.setHelp(false),
+      toggleHelp: () => (document.getElementById('help-modal')?.hidden ? this.openHelp() : this.closeHelp()),
+      closeHelp: () => this.closeHelp(),
       onEscape: () => this.escape(),
       onKey: code => Boolean(this.menu?.onKey(code)),
       onLookFallback: () => this.dragLookNotice(),
@@ -167,10 +169,32 @@ export class PixeledGame {
     this.resume();
   }
 
+  /**
+   * Open the help sheet. While it is up the controls are parked and the pointer is released, so the
+   * buttons are clickable even when the mouse was captured.
+   */
+  openHelp() {
+    this.ui.setHelp(true);
+    this.input.enabled = false;
+    this.input.release();
+    document.getElementById('start-hint')?.classList.add('hidden');
+  }
+
+  /** Close the help sheet: back to the menu if it was open behind, otherwise back to the game. */
+  closeHelp() {
+    this.ui.setHelp(false);
+    if (this.paused) {
+      this.menu.show(this.menu.paused);
+      return;
+    }
+    this.input.enabled = true;
+    if (!this.input.isTouch) this.input.requestLock();
+  }
+
   /** Escape closes help, then toggles the menu. */
   escape() {
     const help = document.getElementById('help-modal');
-    if (help && !help.hidden) { this.ui.setHelp(false); return; }
+    if (help && !help.hidden) { this.closeHelp(); return; }
     if (this.paused) this.resume();
     else this.pause(true);
   }
