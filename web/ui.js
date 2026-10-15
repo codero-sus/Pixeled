@@ -9,6 +9,8 @@ export class Ui {
     this.hotbar = document.getElementById('hotbar');
     this.toastTimer = 0;
     this.selected = 0;
+    this.showBiome = true;
+    this.scale = 100;
     this.buildHotbar();
     document.getElementById('new-world')?.addEventListener('click', () => callbacks.newWorld?.());
     document.getElementById('open-help')?.addEventListener('click', () => this.requestHelp());
@@ -61,21 +63,50 @@ export class Ui {
     }
   }
 
-  setStatus({ fps, position, biome, seed, clock, flying, blocksPlaced }) {
-    const fpsElement = document.getElementById('hud-fps');
-    if (fpsElement) fpsElement.textContent = `${fps} FPS`;
-    const positionElement = document.getElementById('hud-position');
-    if (positionElement) positionElement.textContent = `${position.x} ${position.y} ${position.z}`;
-    const biomeElement = document.getElementById('hud-biome');
-    if (biomeElement) biomeElement.textContent = biome;
-    const seedElement = document.getElementById('hud-seed');
-    if (seedElement) seedElement.textContent = String(seed);
-    const clockElement = document.getElementById('hud-clock');
-    if (clockElement) clockElement.textContent = formatClock(clock);
-    const modeElement = document.getElementById('hud-mode');
-    if (modeElement) modeElement.textContent = flying ? 'FLYING' : 'WALKING';
-    const placedElement = document.getElementById('hud-edits');
-    if (placedElement) placedElement.textContent = String(blocksPlaced);
+  setStatus({ fps, position, biome, seed, clock, flying, blocksPlaced, broken, walked, weather,
+              facing, underfoot, breath, underwater, crouching, sprinting, chunks, draws }) {
+    const write = (id, text) => {
+      const element = document.getElementById(id);
+      if (element && element.textContent !== text) element.textContent = text;
+    };
+    write('hud-fps', `${fps} FPS`);
+    write('hud-position', `${position.x} ${position.y} ${position.z}`);
+    write('hud-biome', this.showBiome ? biome : '—');
+    write('hud-seed', String(seed));
+    write('hud-clock', formatClock(clock));
+    write('hud-mode', flying ? 'FLYING' : crouching ? 'CROUCHING' : sprinting ? 'SPRINTING' : 'WALKING');
+    write('hud-weather', weather ?? 'clear');
+    write('hud-facing', facing ?? 'north');
+    write('hud-mined', String(broken ?? 0));
+    write('hud-walked', `${Math.round(walked ?? 0)} m`);
+    write('hud-edits', String(blocksPlaced));
+    write('target-label', underfoot ?? '');
+    if (typeof draws === 'number' && chunks) this.lastStats = { draws, chunks };
+
+    // The breath bar only exists while the head is under water.
+    const breathBar = document.getElementById('breath');
+    if (breathBar) {
+      const show = Boolean(underwater);
+      breathBar.hidden = !show;
+      breathBar.classList.toggle('hidden', !show);
+      const fill = document.getElementById('breath-fill');
+      if (fill) {
+        fill.style.width = `${Math.round((breath ?? 1) * 100)}%`;
+        fill.classList.toggle('low', (breath ?? 1) < 0.3);
+      }
+    }
+  }
+
+  /** HUD scale, so the interface is readable on a phone and compact on a desktop. */
+  setScale(percent = 100) {
+    this.scale = percent;
+    document.documentElement?.style?.setProperty('--ui-scale', String(Math.max(0.8, Math.min(1.5, percent / 100))));
+    return this.scale;
+  }
+
+  setBiomeReadout(show) {
+    this.showBiome = Boolean(show);
+    return this.showBiome;
   }
 
   toast(message, milliseconds = 1600) {

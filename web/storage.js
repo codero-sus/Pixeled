@@ -18,13 +18,19 @@ export class BrowserSave {
         player: save.player ?? null,
         selected: save.selected ?? 0,
         clock: typeof save.clock === 'number' ? save.clock : 0.42,
+        // Added later, and optional: an old save simply has no weather or tally in it.
+        weather: save.weather ?? null,
+        distance: Number.isFinite(save.distance) ? save.distance : null,
+        broken: Number.isFinite(save.broken) ? save.broken : 0,
+        placed: Number.isFinite(save.placed) ? save.placed : 0,
+        steps: Number.isFinite(save.steps) ? save.steps : 0,
       };
     } catch (_) {
       return null;
     }
   }
 
-  write({ seed, edits, player, selected, clock }) {
+  write({ seed, edits, player, selected, clock, weather = null, distance = null, broken = 0, placed = 0, steps = 0 }) {
     try {
       const payload = {
         seed,
@@ -32,6 +38,11 @@ export class BrowserSave {
         player: { x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch },
         selected,
         clock,
+        weather,
+        distance,
+        broken,
+        placed,
+        steps,
         savedAt: Date.now(),
       };
       localStorage.setItem(KEY, JSON.stringify(payload));

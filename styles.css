@@ -628,3 +628,132 @@ body.menu-open #game { cursor: default; }
 .overlay.menu.hidden { display: none; }
 .menu-button[hidden] { display: none; }
 .menu-seed-row[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- new for v3.1 */
+
+:root { --ui-scale: 1; }
+
+/* HUD scale (Settings → HUD scale). `zoom` keeps every centred panel centred. */
+.hud { zoom: var(--ui-scale); }
+
+.menu-chip.active {
+  border-color: rgba(179, 223, 158, 0.75);
+  background: rgba(179, 223, 158, 0.16);
+  color: var(--ink);
+}
+
+.target-label {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 24, 0.55);
+  border: 1px solid var(--edge);
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.target-label:empty { opacity: 0; }
+
+.breath {
+  position: absolute;
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  width: min(280px, 52vw);
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 24, 0.55);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.breath i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #7ad2ff, #3f9fe0);
+  transition: width 0.12s linear;
+}
+
+.breath i.low { background: linear-gradient(90deg, #ffd479, #ff8a5c); }
+
+/* ---- settings panel inside the pause menu ---- */
+
+.settings-panel {
+  margin-top: 12px;
+  border-top: 1px solid var(--edge);
+  padding-top: 12px;
+  text-align: left;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-grid { display: grid; gap: 10px; }
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(110px, 1.2fr) 56px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.settings-row.switch { grid-template-columns: 1fr auto; }
+
+.settings-label { display: grid; gap: 2px; }
+.settings-label small { color: var(--muted); font-size: 10px; }
+
+.settings-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--mint);
+  background: transparent;
+}
+
+.settings-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--mint);
+}
+
+.settings-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+.settings-note { color: var(--muted); font-size: 10px; }
+
+.credits {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* A little more room for the wider HUD on phones. */
+@media (max-width: 560px) {
+  .target-label { top: calc(50% + 20px); font-size: 11px; }
+  .breath { bottom: 150px; }
+  .settings-row { grid-template-columns: 1fr 1fr 46px; font-size: 11px; }
+}

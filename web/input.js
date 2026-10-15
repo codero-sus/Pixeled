@@ -297,6 +297,14 @@ export class Input {
     return jump;
   }
 
+  /**
+   * Sprint is Shift in the air-craft sense, crouch is Ctrl (or C, or a short joystick throw).
+   * They were once both bound to Shift, which quietly made sprinting impossible.
+   */
   get sprint() { return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || Math.hypot(this.move.x, this.move.y) > 0.85; }
-  get crouch() { return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); }
+
+  get crouch() { return this.keys.has('ControlLeft') || this.keys.has('ControlRight') || this.keys.has('KeyC'); }
+
+  /** Hold Z to zoom in — useful for scouting a coastline before you commit to a walk. */
+  get zoom() { return this.keys.has('KeyZ'); }
 }
