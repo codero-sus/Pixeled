@@ -117,6 +117,311 @@ assert.ok(noon.zenith[2] > night.zenith[2], 'the day sky is bluer than the night
 
 // =============================================================== browser stubs
 
+// =============================================================== v3.1 systems
+// Everything below was added in the big polish batch: particles, weather, settings, mining timers,
+// the day cycle, the new blocks and the audio voices. Each block is a self-contained check.
+
+const constants = await import('../web/constants.js');
+const { Particles } = await import('../web/particles.js');
+const { Weather } = await import('../web/weather.js');
+const { Settings, DEFAULTS } = await import('../web/settings.js');
+const { Mining, DayCycle, Footsteps, breakSeconds, dayPhase, isNight, describeTarget: describeBlock } = await import('../web/gameplay.js');
+
+// --- the block table grew, and the old ids did not move
+const blockIds = constants.BLOCKS.map(entry => entry.id);
+assert.equal(new Set(blockIds).size, blockIds.length, 'block ids are unique');
+assert.deepEqual(blockIds.slice(0, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'ids 1-10 still match the other editions');
+assert.equal(blockIds.length, 29, `twenty-nine blocks plus air (${blockIds.length})`);
+assert.equal(constants.blockById(0).name, 'Air', 'id 0 is air in every edition');
+assert.equal(constants.blockById(23).name, 'Spruce needles', 'the earlier batch of ids is untouched');
+assert.equal(constants.blockById(29).name, 'Pumpkin', 'and id 29 is the newest block');
+for (const id of blockIds) {
+  const entry = constants.blockById(id);
+  assert.equal(typeof entry.sound, 'string', `block ${entry.name} has a digging voice`);
+  assert.ok(Number.isFinite(entry.hardness) || entry.hardness === Infinity, `block ${entry.name} has a hardness`);
+  assert.equal(entry.top.length, 3, `block ${entry.name} has an RGB top face`);
+  assert.ok(entry.top.every(channel => channel >= 0 && channel <= 1), `block ${entry.name} colour channels stay in range`);
+}
+assert.deepEqual(constants.ORES, [11, 12, 13, 14], 'four ores are declared');
+assert.deepEqual(constants.PLANTS, [18, 19], 'two plants are declared');
+assert.equal(constants.PALETTE.length, 28, `twenty-eight placeable blocks (${constants.PALETTE.length})`);
+assert.ok(!constants.PALETTE.includes(constants.WATER), 'water is not placeable');
+assert.ok(constants.isTransparent(constants.GLASS) && constants.isTransparent(constants.ICE), 'glass and ice are see-through');
+assert.ok(!constants.isTransparent(constants.STONE), 'stone is opaque');
+assert.ok(constants.isTransparent(constants.TALL_GRASS), 'plants do not block the view');
+assert.equal(constants.EMISSIVE.has(constants.DIAMOND_ORE), true, 'diamond ore glows at night');
+assert.ok(constants.blockById(999).id >= 1, 'an out-of-range id still returns a real block');
+
+// --- mining times rise with hardness, and plants pop instantly
+const hardOrder = [constants.GRASS, constants.STONE, constants.IRON_ORE, constants.DIAMOND_ORE].map(breakSeconds);
+assert.ok(hardOrder[0] < hardOrder[1] && hardOrder[1] < hardOrder[2] && hardOrder[2] < hardOrder[3],
+  `break times rise with hardness (${hardOrder.map(v => v.toFixed(2)).join(' < ')})`);
+assert.equal(breakSeconds(constants.TALL_GRASS), 0, 'grass pops on the first tap');
+assert.equal(breakSeconds(constants.WATER), Infinity, 'water is never "mined"');
+
+// --- ore bands: rare stuff deep down, coal all over
+const census = new Map();
+let deepest = new Map();
+for (let y = 0; y < WORLD_Y; y++) {
+  for (let z = 0; z < WORLD_Z; z++) {
+    for (let x = 0; x < WORLD_X; x++) {
+      const id = one.get(x, y, z);
+      if (constants.ORES.includes(id)) {
+        census.set(id, (census.get(id) ?? 0) + 1);
+        deepest.set(id, Math.max(deepest.get(id) ?? 0, y));
+      }
+    }
+  }
+}
+for (const ore of constants.ORES) assert.ok((census.get(ore) ?? 0) > 100, `ore ${ore} exists in the world (${census.get(ore) ?? 0})`);
+assert.ok(deepest.get(constants.DIAMOND_ORE) < 14, `diamond stays in the deep band (max y ${deepest.get(constants.DIAMOND_ORE)})`);
+assert.ok(deepest.get(constants.GOLD_ORE) < 14, 'gold is a deep ore too');
+assert.ok(deepest.get(constants.IRON_ORE) < 26, 'iron stops below the caves');
+assert.ok(deepest.get(constants.COAL_ORE) > deepest.get(constants.DIAMOND_ORE), 'coal reaches higher than diamond');
+assert.ok(census.get(constants.COAL_ORE) > census.get(constants.DIAMOND_ORE), 'diamond is rarer than coal');
+
+// --- decorations and the deep rock types the third wave added
+const decoration = new Map();
+for (const seed of [2408, 7, 4242, 99, 31337]) {
+  const world = new VoxelWorld(seed);
+  for (let i = 0; i < world.data.length; i++) {
+    const id = world.data[i];
+    if (id) decoration.set(id, (decoration.get(id) ?? 0) + 1);
+  }
+}
+for (const [name, id] of [
+  ['birch logs', constants.BIRCH_LOG], ['birch leaves', constants.BIRCH_LEAVES],
+  ['cobblestone', constants.COBBLESTONE], ['mossy stone', constants.MOSSY_STONE],
+  ['obsidian', constants.OBSIDIAN], ['pumpkins', constants.PUMPKIN],
+]) {
+  assert.ok((decoration.get(id) ?? 0) > 5, `${name} generate in the world (${decoration.get(id) ?? 0} across five seeds)`);
+}
+assert.ok(decoration.get(constants.OBSIDIAN) < decoration.get(constants.COBBLESTONE), 'obsidian is rarer than cobblestone');
+
+// --- biomes: a normal world is not one shade of green
+const biomeNamesIn = world => {
+  const seen = new Set();
+  for (let x = 4; x < WORLD_X; x += 5) {
+    for (let z = 4; z < WORLD_Z; z += 5) seen.add(world.biomeNameAt(x, z));
+  }
+  return seen;
+};
+const biomeSeen = biomeNamesIn(one);
+assert.ok(biomeSeen.size >= 3, `one world holds several biomes (${[...biomeSeen].join(', ')})`);
+assert.ok(one.tintAt(40, 40).length === 3, 'every column has a grass tint');
+const allBiomes = new Set([...biomeSeen]);
+for (const seed of [7, 99, 4242, 90210, 31337, 6512, 8080, 1234, 5150, 20001]) {
+  for (const name of biomeNamesIn(new VoxelWorld(seed))) allBiomes.add(name);
+}
+assert.equal(allBiomes.size, 7, `all seven biomes grow somewhere (${[...allBiomes].sort().join(', ')})`);
+const tintValues = Object.values((await import('../web/world.js')).GRASS_TINTS);
+assert.equal(tintValues.length, 7, 'seven biomes each have a grass tint');
+for (const tint of tintValues) assert.equal(tint.length, 3, 'tints are RGB triples');
+
+// --- plants and boulders end up in the mesh
+const plantChunk = buildChunkMesh(one, 3, 3);
+assert.ok(plantChunk.opaque.quadCount > 0, 'chunks still emit opaque geometry');
+for (const layer of ['opaque', 'water', 'plants']) {
+  assert.ok(layer in plantChunk, `the mesher returns the ${layer} layer separately`);
+}
+let plantQuads = 0, plantColours = 0, plantVertices = 0;
+for (let cx = 0; cx < 8; cx++) {
+  for (let cz = 0; cz < 8; cz++) {
+    const mesh = buildChunkMesh(one, cx, cz);
+    if (mesh.plants) {
+      plantQuads += mesh.plants.quadCount;
+      plantColours += mesh.plants.colors.length;
+      plantVertices += mesh.plants.vertexCount;
+      assert.equal(mesh.plants.colors.length, mesh.plants.vertexCount * 3, 'plant colours match their vertices');
+      assert.equal(mesh.plants.indices.length, mesh.plants.quadCount * 6, 'plant indices are triangles');
+    }
+  }
+}
+assert.ok(plantQuads > 0, `crossed plants are meshed somewhere (${plantQuads} plant quads)`);
+assert.ok(plantVertices > 0 && plantColours === plantVertices * 3, 'every plant vertex carries its biome colour');
+
+// --- particles: a fixed pool, gravity, and no leaks
+const particles = new Particles(48);
+assert.equal(particles.active, 0, 'the pool starts empty');
+particles.burst(4, 4, 4, [0.5, 0.4, 0.3], 20);
+assert.equal(particles.active, 20, 'a burst fills twenty particles');
+particles.splash(2, 2, 2, 10);
+assert.equal(particles.active, 30, 'a splash adds droplets');
+particles.dust(1, 1, 1, [0.4, 0.4, 0.4]);
+particles.leaves(3, 3, 3, [0.3, 0.7, 0.3], 6);
+assert.equal(particles.active, 40, 'dust and leaves add their own particles');
+particles.burst(9, 9, 9, [0.2, 0.2, 0.9], 200);
+assert.equal(particles.active, 48, 'the pool caps at its limit and never overflows');
+const over = [];
+for (let i = 0; i < 120; i++) over.push(particles.take());
+assert.ok(new Set(over).size <= 48, 'particles are recycled from the same pool, not allocated');
+assert.ok(particles.spawned >= 100, `the pool counts what it has spawned (${particles.spawned})`);
+for (let i = 0; i < 90; i++) particles.update(1 / 60, one);      // a second and a half of frames
+assert.ok(particles.active < 48, `short-lived particles expire (${particles.active} left)`);
+assert.ok(particles.visible().length === particles.active, 'only live particles reach the renderer');
+particles.clear();
+assert.equal(particles.active, 0, 'clear empties the pool');
+const faller = particles.take();
+Object.assign(faller, { x: 40, y: 50, z: 40, vx: 0, vy: 0, vz: 0, size: 0.05, life: 5, gravity: 1, drag: 1, r: 1, g: 1, b: 1, a: 1 });
+for (let i = 0; i < 6; i++) particles.update(1 / 60, one);
+assert.ok(faller.vy < 0, 'gravity pulls particles down');
+assert.ok(faller.y < 50, 'and they actually fall');
+
+// --- weather: it rains, it snows, it thunders, and it saves
+const weather = new Weather(4242);
+assert.equal(weather.state.label, 'clear', 'a fresh world starts clear');
+const realRandom = Math.random;
+let thunderSeen = 0;
+for (let second = 0; second < 60 * 25; second++) {
+  for (let frame = 0; frame < 10; frame++) {
+    weather.update(0.1, { snowBiome: second > 900 });          // simulate ten minutes
+    if (weather.thundering) thunderSeen++;
+  }
+}
+assert.ok(weather.cycles > 0, `the sky changes over time (${weather.cycles} fronts)`);
+assert.ok(weather.strikes > 0, `thunderstorms strike (${weather.strikes})`);
+void thunderSeen;
+weather.phase = 'storm'; weather.target = 1; weather.intensity = 1; weather.stormy = true; weather.timer = 1e6;
+Math.random = () => 0;                                          // force the strike roll to succeed
+weather.update(1 / 60, {});
+assert.ok(weather.flash > 0, 'a strike lights the sky');
+assert.equal(weather.thundering, true, 'and reports the thunder for the audio');
+Math.random = realRandom;
+const snowy = new Weather(7);
+snowy.phase = 'storm'; snowy.target = 1; snowy.stormy = false; snowy.timer = 1e6;
+for (let i = 0; i < 60; i++) snowy.update(0.1, { snowBiome: true });
+assert.equal(snowy.state.snow, true, 'cold biomes get snow instead of rain');
+assert.equal(snowy.state.raining, false, 'snow is not rain');
+const roundTrip = new Weather(11);
+roundTrip.phase = 'storm'; roundTrip.timer = 42; roundTrip.intensity = 0.62; roundTrip.cycles = 3;
+const loaded = new Weather(11).load(roundTrip.serialize());
+assert.equal(loaded.phase, 'storm', 'the storm survives a save');
+assert.ok(Math.abs(loaded.timer - 42) < 0.001, 'so does the countdown');
+assert.ok(Math.abs(loaded.intensity - 0.62) < 0.001, 'and the intensity');
+const off = new Weather(5, { enabled: false });
+off.intensity = 1;
+for (let i = 0; i < 40; i++) off.update(0.1, {});
+assert.ok(off.intensity < 0.5, 'turning weather off drains the sky');
+
+// --- settings: clamped, sticky, and separate from the world save
+const store = new Map();
+const settingsStore = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) };
+const settings = new Settings(settingsStore);
+assert.equal(settings.get('fov'), DEFAULTS.fov, 'settings start at their defaults');
+assert.equal(settings.set('fov', 9999), 110, 'field of view is clamped at the top');
+assert.equal(settings.set('fov', 1), 50, 'and at the bottom');
+assert.equal(settings.set('volume', -20), 0, 'volume cannot go negative');
+assert.equal(settings.set('uiScale', 500), 150, 'the HUD cannot grow past 150%');
+assert.equal(settings.set('bob', 0), false, 'switches coerce to booleans');
+assert.equal(settings.set('nonsense', 5), undefined, 'unknown keys are ignored');
+assert.ok(store.has('pixeled-settings-v1'), 'settings are written under their own key');
+const remembered = new Settings(settingsStore);
+assert.equal(remembered.get('fov'), 50, 'settings come back next time');
+assert.equal(remembered.get('bob'), false, 'including the switches');
+assert.ok(Math.abs(remembered.mouseSensitivity - 0.0022) < 1e-6, 'sensitivity is scaled for the look code');
+assert.ok(Math.abs(settings.fovRadians - (50 * Math.PI) / 180) < 1e-9, 'field of view converts to radians');
+settings.set('reducedMotion', true);
+assert.ok(settings.effectiveDayLength > settings.get('dayLength'), 'reduced motion slows the clock');
+settings.reset();
+assert.equal(settings.get('fov'), DEFAULTS.fov, 'reset restores the defaults');
+const brokenStore = new Settings({ getItem: () => '{not json', setItem: () => { throw new Error('private mode'); } });
+assert.equal(brokenStore.get('fov'), DEFAULTS.fov, 'a corrupt settings blob falls back to defaults');
+assert.doesNotThrow(() => brokenStore.save(), 'and a store that refuses writes does not crash the game');
+
+// --- mining: progress, ticks, resets and instants
+const mining = new Mining();
+const stoneCell = { x: 40, y: 40, z: 40 };
+one.set(stoneCell.x, stoneCell.y, stoneCell.z, constants.STONE);
+one.set(stoneCell.x, stoneCell.y + 1, stoneCell.z, constants.AIR);
+let miningTicks = 0;
+let brokenAt = 0;
+const miningStart = 0;
+for (let i = 0; i < 600; i++) {
+  const result = mining.hold(1 / 60, stoneCell, one);
+  if (result.tick) miningTicks++;
+  if (result.broken) { brokenAt = i / 60; break; }
+}
+assert.ok(brokenAt > 0.4, `stone takes real time to break (${brokenAt.toFixed(2)}s)`);
+assert.ok(miningTicks >= 2, `the dig ticks along the way (${miningTicks})`);
+const instant = mining.hold(1 / 60, stoneCell, { get: () => constants.TALL_GRASS });
+assert.equal(instant.broken, true, 'plants break on the first bite');
+const progressA = new Mining();
+progressA.hold(0.3, stoneCell, one);
+assert.ok(progressA.progress > 0.2 && progressA.progress < 0.6, 'a part-way dig reports its progress');
+const firstKey = progressA.key;
+progressA.hold(0.1, { x: 12, y: 30, z: 12 }, one);
+assert.notEqual(progressA.key, firstKey, 'looking elsewhere re-targets the dig');
+assert.equal(new Mining().hold(0.1, null, one).digging, false, 'mining nothing does nothing');
+assert.equal(progressA.swingRate > 0, true, 'the swing rate is derived from the block');
+void miningStart;
+
+// --- the day cycle and its labels
+const day = new DayCycle(600, 0.0);
+const phasesSeen = new Set();
+for (let i = 0; i < 600 * 61; i++) { day.update(1 / 60); phasesSeen.add(day.phase); }
+assert.equal(day.days, 1, 'one full day passes in one day length (plus a second of slack)');
+assert.deepEqual([...phasesSeen].sort(), ['dawn', 'day', 'dusk', 'night'], 'the clock visits every phase');
+assert.match(day.timeLabel, /^\d\d:\d\d$/, 'the clock reads like a clock');
+assert.equal(isNight(0.0), true, 'midnight is night');
+assert.equal(dayPhase(0.5), 'day', 'midday is day');
+assert.equal(dayPhase(1.5), dayPhase(0.5), 'the clock wraps around');
+
+// --- footsteps and swimming
+const steps = new Footsteps();
+let walkSteps = 0;
+for (let i = 0; i < 200; i++) if (steps.update(0.05, {})) walkSteps++;
+assert.ok(walkSteps > 3 && walkSteps < 12, `a stride lands every couple of blocks (${walkSteps})`);
+const sprintSteps = new Footsteps();
+let fastSteps = 0;
+for (let i = 0; i < 200; i++) if (sprintSteps.update(0.05, { sprinting: true })) fastSteps++;
+assert.ok(fastSteps > walkSteps, `sprinting steps more often (${fastSteps} vs ${walkSteps})`);
+assert.equal(new Footsteps().update(0.05, { inWater: true }), false, 'swimming makes no footstep sound');
+assert.equal(new Footsteps().update(0.05, { onGround: false }), false, 'nor does falling');
+
+describeBlock: {
+  const named = describeBlock(one, { x: 40, y: 40, z: 40 });
+  assert.equal(named, 'Stone', `the crosshair names the block (${named})`);
+  assert.equal(describeBlock(one, null), '', 'and says nothing about thin air');
+}
+
+// --- audio: materials, loops and silence
+const audio = new (await import('../web/audio.js')).Audio();
+const created = { oscillators: 0, buffers: 0, sources: 0, filters: 0, gains: 0 };
+globalThis.window = globalThis.window ?? {};
+globalThis.window.AudioContext = class {
+  constructor() { this.currentTime = 0; this.sampleRate = 8000; this.state = 'running'; this.destination = {}; }
+  createOscillator() { created.oscillators++; return { type: '', frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {}, value: 0 }, connect: () => ({ connect: () => {} }), start() {}, stop() {} }; }
+  createBuffer() { created.buffers++; return { getChannelData: () => new Float32Array(16) }; }
+  createBufferSource() { created.sources++; return { buffer: null, loop: false, playbackRate: { value: 1 }, connect: () => ({ connect: () => ({ connect: () => {} }) }), start() {}, stop() {} }; }
+  createBiquadFilter() { created.filters++; return { type: '', frequency: { value: 0 }, Q: { value: 0 }, connect: () => ({ connect: () => ({ connect: () => {} }) }) }; }
+  createGain() { created.gains++; return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: () => ({ connect: () => {} }) }; }
+  resume() {}
+};
+audio.resume();
+audio.step(constants.GRASS);
+audio.step(constants.STONE);
+audio.digTick(constants.STONE);
+audio.dig(constants.DIAMOND_ORE);
+audio.splash();
+audio.thunder();
+assert.ok(created.oscillators > 0 && created.sources > 0, `sounds are synthesised (${created.oscillators} tones, ${created.sources} noise bursts)`);
+assert.ok(created.filters > 0, 'and shaped by filters');
+audio.setRain(0.8);
+assert.ok(audio.rain, 'rain starts a looping source');
+audio.setRain(0.9);
+const rainSources = created.sources;
+audio.setRain(0.4);
+assert.equal(created.sources, rainSources, 'the rain loop is reused, never restarted');
+audio.setRain(0);
+assert.equal(audio.rain, null, 'and it stops when the sky clears');
+audio.setVolume(0);
+const quiet = created.oscillators;
+audio.blip(440);
+assert.equal(created.oscillators, quiet, 'muted audio makes no sound');
+audio.setVolume(70);
+assert.equal(audio.toggle(), false, 'the sound button mutes');
+assert.equal(audio.toggle(), true, 'and unmutes');
+
 class StubElement {
   constructor(id = '') {
     this.id = id;
@@ -463,6 +768,234 @@ assert.equal(reloaded.world.edits.size, 0, 'a new world starts clean');
 
 step(30);
 assert.ok(reloaded.loaded, 'the new world finishes loading too');
+
+// =============================================================== v3.1 systems in the running game
+// The reload check above threw away the first game's pending frame callback, so the instance
+// that is still animating is the reloaded one. Drive that one from here on.
+const live = reloaded;
+assert.ok(live.particles instanceof Particles, 'the game owns a particle pool');
+assert.ok(live.weather instanceof Weather, 'and a weather machine');
+assert.ok(live.settings instanceof Settings, 'and a settings store');
+assert.ok(live.panel, 'the pause menu has a settings panel');
+assert.ok(live.fovSmooth > 0, 'the field of view is smoothed for the sprint stretch');
+
+// --- the HUD grew extra readouts
+step(24);
+assert.ok(elements.get('hud-weather').textContent.length > 0, 'the HUD shows the sky');
+assert.ok(['north', 'east', 'south', 'west', 'north-east', 'north-west', 'south-east', 'south-west']
+  .includes(elements.get('hud-facing').textContent), `the HUD shows the compass (${elements.get('hud-facing').textContent})`);
+assert.match(elements.get('hud-walked').textContent, /^\d+ m$/, 'the HUD counts the distance walked');
+assert.match(elements.get('hud-mined').textContent, /^\d+$/, 'and the blocks broken');
+
+// A test pad: flatten a patch of ground and clear the air above it, so digging and walking checks
+// do not depend on whether the random world grew a tree or a cliff at that exact spot.
+const PAD = { x: 64, z: 64, half: 8 };
+const padHeight = live.world.surfaceHeight(PAD.x, PAD.z);
+const buildPad = () => {
+  for (let dz = -PAD.half; dz <= PAD.half; dz++) {
+    for (let dx = -PAD.half; dx <= PAD.half; dx++) {
+      live.world.set(PAD.x + dx, padHeight, PAD.z + dz, STONE);
+      for (let y = padHeight + 1; y <= padHeight + 8; y++) live.world.set(PAD.x + dx, y, PAD.z + dz, AIR);
+    }
+  }
+};
+buildPad();
+const standOnPad = (cellX, cellZ, lift = 3) => {
+  live.player.flying = true;
+  live.player.x = cellX + 0.5;
+  live.player.z = cellZ + 0.5;
+  live.player.y = padHeight + lift;
+  live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
+};
+
+// --- a stone block needs the button held, grass does not
+if (live.paused) live.resume();
+standOnPad(PAD.x, PAD.z);
+live.world.set(PAD.x, padHeight, PAD.z, STONE);
+live.world.set(PAD.x, padHeight + 1, PAD.z, AIR);
+live.world.set(PAD.x, padHeight + 2, PAD.z, AIR);
+live.player.pitch = -1.5; live.player.yaw = 0;
+step(1);
+const stoneTarget = live.target();
+assert.ok(stoneTarget, 'there is stone under the crosshair');
+live.mine();
+assert.notEqual(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'one tap does not break stone');
+live.input.mining = true;
+step(90);
+live.input.mining = false;
+assert.equal(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'holding the button does');
+assert.ok(live.particles.spawned > 0, 'breaking a block throws particles');
+assert.ok(live.tally.broken >= 1, 'and the tally counts it');
+assert.ok(live.world.edits.size >= 1, 'the block change is recorded for saving');
+
+// --- particles also appear when building, and quieten down when switched off
+live.settings.set('particles', false);
+live.onSettingChanged('particles', false);
+const spawnedWithParticlesOff = live.particles.spawned;
+live.selectHotbar(2);
+live.player.pitch = -1.5;
+const beforeBuildParticles = live.particles.active;
+live.build();
+assert.equal(live.particles.active, beforeBuildParticles, 'no particles are made when the setting is off');
+assert.equal(live.particles.spawned, spawnedWithParticlesOff, 'and the pool is left alone');
+live.settings.set('particles', true);
+live.onSettingChanged('particles', true);
+
+// --- underwater: the breath bar appears and drains
+live.player.flying = false;
+const waterSpot = live.world.spawnPoint();
+// Find a *deep* pool, not just a cell with water on top: the player has to fit inside water whose
+// surface is above their eyes.
+let waterColumn = null;
+for (let z = 1; z < WORLD_Z - 1; z += 2) {
+  for (let x = 1; x < WORLD_X - 1; x += 2) {
+    if (live.world.get(x, SEA_LEVEL, z) !== WATER) continue;
+    let depth = 0;
+    while (live.world.isLiquid(x, SEA_LEVEL - depth - 1, z)) depth++;
+    if (depth < 4) continue;
+    if (!waterColumn || depth > waterColumn.depth) waterColumn = { x, z, depth };
+  }
+}
+assert.ok(waterColumn && waterColumn.depth >= 4, `the world has deep water to dive into (${waterColumn?.depth})`);
+live.player.x = waterColumn.x + 0.5;
+live.player.z = waterColumn.z + 0.5;
+live.player.y = SEA_LEVEL - 1.5;
+const breathBefore = live.player.breath;
+step(20);
+assert.equal(live.player.headUnder, true, 'the player is under water');
+assert.ok(live.player.breath < breathBefore, 'breath drains under water');
+assert.equal(elements.get('breath').hidden, false, 'the breath bar appears');
+assert.ok(elements.get('breath-fill').style.width.endsWith('%'), 'and shows how much is left');
+live.player.y = SEA_LEVEL + 4;
+step(30);
+assert.ok(live.player.breath > 4, 'breath refills in the air');
+
+// --- weather in the running game, and turning it off
+live.weather.phase = 'storm';
+live.weather.target = 1;
+live.weather.stormy = true;
+live.weather.timer = 1e6;
+step(30);
+assert.ok(live.weather.intensity > 0, 'a storm builds up while playing');
+step(24);
+assert.ok(elements.get('hud-weather').textContent !== 'clear', 'the HUD reports the weather');
+live.settings.set('weather', false);
+live.onSettingChanged('weather', false);
+for (let i = 0; i < 30; i++) live.weather.update(0.2, {});
+assert.ok(live.weather.intensity < 0.05, 'switching weather off clears the sky');
+live.settings.set('weather', true);
+live.onSettingChanged('weather', true);
+
+// --- settings changes reach the systems they control (the panel stores then notifies)
+const setOption = (key, value) => {
+  live.settings.set(key, value);
+  return live.onSettingChanged(key, live.settings.get(key));
+};
+setOption('renderDistance', 72);
+assert.equal(live.viewDistance, 72, 'view distance is applied');
+setOption('fov', 90);
+assert.ok(Math.abs(live.fov - (90 * Math.PI) / 180) < 1e-9, 'field of view is applied');
+setOption('volume', 15);
+assert.ok(Math.abs(live.audio.volume - 0.15) < 1e-9, 'volume is applied');
+setOption('particles', false);
+setOption('particles', true);
+setOption('minimap', false);
+step(24);
+assert.equal(elements.get('hud-biome').textContent, '—', 'the biome readout can be hidden');
+setOption('minimap', true);
+step(24);
+assert.notEqual(elements.get('hud-biome').textContent, '—', 'and comes back');
+setOption('reducedMotion', true);
+assert.ok(live.settings.effectiveDayLength > 600, 'reduced motion stretches the day while playing');
+setOption('reducedMotion', false);
+setOption('bob', false);
+step(5);
+assert.ok(Math.abs(live.player.cameraRoll) < 0.05, 'turning view bob off steadies the camera');
+setOption('bob', true);
+setOption('viewmodel', false);
+assert.equal(live.settings.get('viewmodel'), false, 'the held block can be hidden');
+setOption('dayLength', 300);
+assert.equal(live.day.seconds, 300, 'the day length is applied live');
+setOption('uiScale', 120);
+assert.equal(live.settings.get('uiScale'), 120, 'the HUD scale is stored');
+setOption('adaptiveDistance', true);
+live.fps = 20;
+step(30);
+assert.ok(live.viewDistance <= 72, `a slow frame rate shortens the fog (${live.viewDistance})`);
+setOption('adaptiveDistance', false);
+step(30);
+assert.equal(live.viewDistance, live.settings.get('renderDistance'), 'and turning it off restores the chosen distance');
+
+// --- walking, sprinting and crouching all move at different speeds
+const distanceOver = (input, frames = 60) => {
+  if (live.paused) live.resume();
+  buildPad();
+  live.player.flying = false;
+  live.player.x = PAD.x + 0.5;
+  live.player.z = PAD.z + PAD.half - 1 + 0.5;      // start at one end of the pad
+  live.player.y = padHeight + 1;
+  live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
+  live.input.keys.clear();
+  for (const key of input) live.input.keys.add(key);
+  const startX = live.player.x, startZ = live.player.z;
+  step(frames);
+  live.input.keys.clear();
+  return Math.hypot(live.player.x - startX, live.player.z - startZ);
+};
+live.player.yaw = 0;
+const walked = distanceOver(['KeyW']);
+const sprinted = distanceOver(['KeyW', 'ShiftLeft']);
+const crouched = distanceOver(['KeyW', 'ControlLeft']);
+assert.ok(walked > 0.2, `holding W moves the player (${walked.toFixed(2)} blocks/s)`);
+assert.ok(sprinted > walked * 1.2, `sprinting is faster (${sprinted.toFixed(2)} vs ${walked.toFixed(2)})`);
+assert.ok(crouched < walked, `crouching is slower (${crouched.toFixed(2)})`);
+assert.ok(live.tally.distance > 0, 'the odometer counts the walking');
+
+// --- the save now carries the weather and the tally
+live.save();
+const richSave = JSON.parse(storage.get('pixeled-voxel-v2'));
+assert.ok(richSave.weather && typeof richSave.weather.phase === 'string', 'the save stores the weather');
+assert.ok(Number.isInteger(richSave.broken), 'and the tally');
+assert.ok(Number.isFinite(richSave.distance), 'and the view distance');
+
+
+// --- zoom: holding Z narrows the field of view and releasing eases it back
+live.input.keys.delete('KeyZ');
+step(30);
+const restingFov = live.fovSmooth;
+live.input.keys.add('KeyZ');
+step(40);
+assert.ok(live.fovSmooth < restingFov * 0.75, `holding Z zooms in (${live.fovSmooth.toFixed(1)} vs ${restingFov.toFixed(1)})`);
+live.input.keys.delete('KeyZ');
+step(60);
+assert.ok(live.fovSmooth > live.fov * 0.9, `releasing Z eases back out (${live.fovSmooth.toFixed(1)})`);
+
+// --- milestones: cheerful one-off toasts as the tally grows
+live.milestones.clear();
+live.tally.broken = 600;
+live.tally.placed = 70;
+live.tally.distance = 1200;
+live.checkMilestones();
+for (const key of ['first-break', 'break-25', 'break-100', 'break-500', 'first-place', 'place-64', 'walk-200', 'walk-1000']) {
+  assert.ok(live.milestones.has(key), `milestone ${key} fired`);
+}
+assert.ok(elements.get('toast').textContent.length > 0, 'a milestone shows a toast');
+assert.equal(live.milestone('break-500', 'again'), false, 'each milestone only fires once');
+assert.equal(live.milestone('brand-new', 'hello'), true, 'a new key fires');
+
+// --- breaking a diamond celebrates, which also exercises the deep-ore flavour text
+if (live.paused) live.resume();
+live.world.set(PAD.x + 3, padHeight, PAD.z + 3, constants.DIAMOND_ORE);
+standOnPad(PAD.x + 3, PAD.z + 3);
+live.player.pitch = -1.5; live.player.yaw = 0;
+step(1);
+live.input.mining = true;
+step(120);
+live.input.mining = false;
+assert.equal(live.world.get(PAD.x + 3, padHeight, PAD.z + 3), AIR, 'the diamond block breaks after a long dig');
+assert.ok(live.milestones.has('diamond'), 'finding diamond is a milestone');
+assert.ok(elements.get('toast').textContent.includes('Diamond'), 'and the toast says so');
+live.tally.broken = live.tally.broken;   // unchanged: the tally belongs to the real session
 
 console.log(`web smoke test passed — ${game.renderer.meshes.size} chunks meshed, ${glStub.stats.draws} draw calls, water blocks: ${waterCount}`);
 void CHUNK; void SEA_LEVEL;

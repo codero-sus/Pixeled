@@ -130,11 +130,19 @@ export function perspective(out, fovy, aspect, near, far) {
   return out;
 }
 
-/** View matrix from a yaw/pitch camera, the same convention the rest of the game uses. */
-export function view(out, eye, yaw, pitch) {
+/**
+ * View matrix from a yaw/pitch camera, the same convention the rest of the game uses.
+ * `roll` is the small camera tilt used for the walking sway.
+ */
+export function view(out, eye, yaw, pitch, roll = 0) {
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
   const fx = -sy * cp, fy = sp, fz = -cy * cp;
-  const rx = cy, ry = 0, rz = -sy;
+  let rx = cy, ry = 0, rz = -sy;
+  if (roll) {
+    const cr = Math.cos(roll), sr = Math.sin(roll);
+    const ux0 = ry * fz - rz * fy, uy0 = rz * fx - rx * fz, uz0 = rx * fy - ry * fx;
+    rx = rx * cr + ux0 * sr; ry = ry * cr + uy0 * sr; rz = rz * cr + uz0 * sr;
+  }
   const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
   out[0] = rx; out[4] = ry; out[8] = rz; out[12] = -(rx * eye[0] + ry * eye[1] + rz * eye[2]);
   out[1] = ux; out[5] = uy; out[9] = uz; out[13] = -(ux * eye[0] + uy * eye[1] + uz * eye[2]);

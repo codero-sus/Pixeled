@@ -6,17 +6,18 @@
  * corner. That keeps the shaders tiny and lets the GPU draw a whole chunk in one call.
  */
 
-import { AIR, AO_LEVELS, CHUNK, CORNER_ORDER, FACES, WATER, WORLD_Y, blockById } from './constants.js';
+import { AIR, AO_LEVELS, CHUNK, CORNER_ORDER, FACES, GRASS, LEAVES, PLANTS, SPRUCE_LEAVES, TALL_GRASS, WATER, WORLD_Y, blockById, isTransparent } from './constants.js';
 import { hashCoords } from './noise.js';
 
 /** A block lets light through: air, water or glass. */
 export function transparent(id) {
-  return id === AIR || blockById(id).transparent;
+  return isTransparent(id);
 }
 
 export function buildChunkMesh(world, chunkX, chunkZ) {
   const opaque = emptyMesh();
   const water = emptyMesh();
+  const plants = emptyMesh();
   const baseX = chunkX * CHUNK, baseZ = chunkZ * CHUNK;
 
   for (let y = 0; y < WORLD_Y; y++) {
@@ -25,6 +26,10 @@ export function buildChunkMesh(world, chunkX, chunkZ) {
         const id = world.get(x, y, z);
         if (id === AIR) continue;
         const block = blockById(id);
+        if (block.plant) {
+          emitPlant(plants, world, block, x, y, z, baseX, baseZ);
+          continue;                                  // plants never emit box faces
+        }
         const target = block.liquid || block.transparent ? water : opaque;
         for (let f = 0; f < 6; f++) {
           const face = FACES[f];
@@ -36,7 +41,54 @@ export function buildChunkMesh(world, chunkX, chunkZ) {
       }
     }
   }
-  return { opaque: finish(opaque), water: finish(water) };
+  return { opaque: finish(opaque), water: finish(water), plants: finish(plants) };
+}
+
+/**
+ * A plant is two crossed, double-sided quads: the cheapest shape that still reads as a tuft or a
+ * flower from every angle. Both windings are emitted so back-face culling can stay on.
+ */
+function emitPlant(mesh, world, block, x, y, z, baseX, baseZ) {
+  const tint = biomeTint(world, x, z, block);
+  const jitter = 0.92 + hashCoords(x, y, z, 23) * 0.16;
+  const height = block.id === TALL_GRASS ? 0.95 : 0.75;
+  const lift = hashCoords(x, y, z, 29) * 0.12;            // so a field of grass is not a grid
+  const light = 0.94 * jitter;
+  const planes = [
+    [[0.06, 0.06], [0.94, 0.94]],
+    [[0.94, 0.06], [0.06, 0.94]],
+  ];
+  for (const [a, b] of planes) {
+    const start = mesh.positions.length / 3;
+    const corners = [
+      [a[0], lift, a[1]],
+      [b[0], lift, b[1]],
+      [b[0], lift + height, b[1]],
+      [a[0], lift + height, a[1]],
+    ];
+    for (const [cx, cy, cz] of corners) {
+      mesh.positions.push(x + cx - baseX, y + cy, z + cz - baseZ);
+      mesh.normals.push(0, 1, 0);
+      mesh.colors.push(tint[0] * light, tint[1] * light, tint[2] * light);
+    }
+    mesh.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
+    mesh.indices.push(start + 2, start + 1, start, start + 3, start + 2, start);
+  }
+}
+
+/** Biome colour for a tinted block, falling back to the plain palette colour. */
+function biomeTint(world, x, z, block) {
+  const base = block.top;
+  if (!block.tint || typeof world.tintAt !== 'function') return base;
+  const tint = world.tintAt(x, z);
+  const plains = block.id === LEAVES || block.id === SPRUCE_LEAVES
+    ? [0.33, 0.65, 0.28]
+    : [0.47, 0.75, 0.35];
+  return [
+    Math.min(1.3, tint[0] / plains[0]) * base[0],
+    Math.min(1.3, tint[1] / plains[1]) * base[1],
+    Math.min(1.3, tint[2] / plains[2]) * base[2],
+  ];
 }
 
 function emptyMesh() { return { positions: [], normals: [], colors: [], indices: [] }; }
@@ -55,7 +107,8 @@ function finish(mesh) {
 
 function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
   const tint = 0.9 + hashCoords(x, y, z, 17) * 0.1;
-  const base = face.normal[1] > 0 ? block.top : face.normal[1] < 0 ? block.bottom : block.side;
+  let base = face.normal[1] > 0 ? block.top : face.normal[1] < 0 ? block.bottom : block.side;
+  if (block.tint && block.id !== TALL_GRASS) base = biomeTint(world, x, z, block);
   const start = mesh.positions.length / 3;
   const lights = [];
 

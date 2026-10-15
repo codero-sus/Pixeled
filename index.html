@@ -22,6 +22,10 @@
         <div><dt>biome</dt><dd id="hud-biome">—</dd></div>
         <div><dt>time</dt><dd id="hud-clock">—</dd></div>
         <div><dt>mode</dt><dd id="hud-mode">WALKING</dd></div>
+        <div><dt>sky</dt><dd id="hud-weather">clear</dd></div>
+        <div><dt>facing</dt><dd id="hud-facing">north</dd></div>
+        <div><dt>mined</dt><dd id="hud-mined">0</dd></div>
+        <div><dt>walked</dt><dd id="hud-walked">0 m</dd></div>
         <div><dt>edits</dt><dd id="hud-edits">0</dd></div>
       </dl>
       <button class="seed" id="copy-seed" type="button" title="Copy a link to this world">
@@ -39,6 +43,8 @@
     </div>
 
     <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
+    <div class="target-label" id="target-label" aria-hidden="true"></div>
+    <div class="breath" id="breath" hidden><i id="breath-fill"></i></div>
 
     <div class="start-hint" id="start-hint">
       <b>Click to play</b>
@@ -93,8 +99,10 @@
         </div>
         <div class="menu-small">
           <button class="menu-chip" id="menu-help" type="button">How to play</button>
+          <button class="menu-chip" id="menu-settings" type="button">Settings</button>
           <button class="menu-chip" id="menu-sound" type="button">Sound: on</button>
         </div>
+        <div class="settings-panel hidden" id="settings-panel" hidden aria-label="Settings"></div>
       </div>
 
       <footer class="menu-foot">
@@ -102,7 +110,7 @@
         <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
       </footer>
     </section>
-    <div class="menu-version">Pixeled 3D · v3.0</div>
+    <div class="menu-version">Pixeled 3D · v3.2 · 29 blocks</div>
   </div>
 
   <!-- ------------------------------------------------------------- loading screen -->
@@ -111,7 +119,7 @@
       <h1>Pixeled <span>3D</span></h1>
       <p id="loading-text">Generating a brand new world…</p>
       <div class="bar"><i id="loading-bar"></i></div>
-      <small>Every world is different: hills, caves, forests, deserts and snowy peaks are all rolled fresh from a random seed.</small>
+      <small>Every world is different: hills, caves, ores, forests, deserts and snowy peaks are all rolled fresh from a random seed.</small>
     </div>
   </div>
 
@@ -128,12 +136,17 @@
         <div><kbd>Right click</kbd><span>Build with the selected block</span></div>
         <div><kbd>1</kbd>–<kbd>9</kbd><span>Choose a block, or scroll</span></div>
         <div><kbd>Middle click</kbd><span>Pick the block you are looking at</span></div>
+        <div><kbd>Left click</kbd><span>Hold to break — time depends on the block</span></div>
+        <div><kbd>Ctrl</kbd><span>Crouch and walk slowly</span></div>
+        <div><kbd>Z</kbd><span>Hold to zoom in</span></div>
+        <div><kbd>C</kbd><span>Crouch too, for laptops without a Ctrl key</span></div>
         <div><kbd>Esc</kbd><span>Release the mouse</span></div>
       </div>
       <p class="touch-note">On a phone or tablet: drag the screen to look, use the thumb-stick to walk, and tap the MINE, PLACE, JUMP and ✈ buttons.</p>
       <p class="note">Your world saves automatically — seed plus every block you changed. Press <b>New world</b> any time for a completely different random landscape.</p>
       <button class="primary-button" id="got-it" type="button">Let's build <span>→</span></button>
       <button class="link" id="close-help" type="button">close</button>
+      <p class="credits">Pixeled 3D · 29 block types · zero dependencies, one canvas · terrain, ores, plants and weather all rolled from the seed.</p>
     </section>
   </div>
 </div>

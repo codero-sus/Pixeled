@@ -249,5 +249,107 @@ byId.get('menu-seed-go').dispatch('click');
 assert.equal(game.world.seed, 2408, 'a typed seed generates that world');
 assert.equal(game.paused, false, 'and starts the game');
 
+// =============================================================== v3.1 markup and panels
+
+// The extra HUD readouts exist in the real markup, not just in the game code.
+for (const id of ['hud-weather', 'hud-facing', 'hud-mined', 'hud-walked', 'target-label', 'breath', 'breath-fill',
+                  'settings-panel', 'menu-settings']) {
+  assert.ok(byId.has(id), `index.html defines #${id}`);
+}
+assert.match(markup, /<div class="breath" id="breath" hidden>/, 'the breath bar starts hidden');
+assert.match(markup, /class="settings-panel hidden" id="settings-panel" hidden/, 'the settings panel starts hidden');
+assert.match(markup, /class="credits"/, 'the help sheet credits the build');
+
+// The stylesheet keeps the new pieces working: the hidden attribute must still win, the panels must
+// stack, and the settings rows must be laid out.
+assert.match(stylesheet, /\.target-label\s*\{[^}]*position:\s*absolute/, 'the target label floats over the crosshair');
+assert.match(stylesheet, /\.target-label:empty\s*\{[^}]*opacity:\s*0/, 'and fades out when nothing is aimed at');
+assert.match(stylesheet, /\.breath i\.low\s*\{/, 'the breath bar turns a warning colour');
+assert.match(stylesheet, /\.settings-panel\s*\{[^}]*max-height/, 'the settings panel scrolls instead of overflowing');
+assert.match(stylesheet, /\.settings-row\s*\{[^}]*grid-template-columns/, 'settings rows use a grid');
+assert.match(stylesheet, /\.hud\s*\{[^}]*zoom:\s*var\(--ui-scale\)/, 'the HUD scale is a CSS variable');
+
+// --- the options panel builds real controls from the settings object
+const { Settings, DEFAULTS } = await import('../web/settings.js');
+const { OptionsPanel } = await import('../web/options.js');
+const panelSettings = new Settings({ getItem: () => null, setItem: () => {} });
+const changes = [];
+const panel = new OptionsPanel(panelSettings, { onChange: (key, value) => changes.push([key, value]) });
+panel.build();
+const panelRoot = panel.root;
+assert.ok(panelRoot, 'the panel found its markup');
+const rows = panelRoot.children.flatMap(child => child.children ?? []);
+assert.ok(rows.length >= 13, `the panel has a row per setting (${rows.length})`);
+assert.equal(panel.controls.size, 13, 'six sliders and seven switches are wired');
+const slider = panel.controls.get('fov');
+assert.equal(slider.type, 'range', 'the field of view is a slider');
+assert.equal(panel.controls.get('volume').type, 'range', 'volume is a slider');
+assert.equal(panel.controls.get('particles').type, 'checkbox', 'particles are a switch');
+slider.value = '95';
+slider.dispatch('input');
+assert.equal(panelSettings.get('fov'), 95, 'dragging a slider stores the value');
+assert.deepEqual(changes.at(-1), ['fov', 95], 'and tells the game about it');
+const switchInput = panel.controls.get('weather');
+switchInput.checked = false;
+switchInput.dispatch('change');
+assert.equal(panelSettings.get('weather'), false, 'a switch stores its state');
+assert.deepEqual(changes.at(-1), ['weather', false], 'and notifies');
+panel.toggle(true);
+assert.equal(panelRoot.hidden, false, 'the panel can be opened');
+assert.equal(panelRoot.classList.contains('hidden'), false, 'and drops its hidden class');
+panel.toggle(false);
+assert.equal(panelRoot.hidden, true, 'and closes again');
+panelSettings.set('fov', 60);
+panel.sync();
+assert.equal(panel.controls.get('fov').value, '60', 'sync pulls the controls back in line');
+const resetButton = panelRoot.children.flatMap(child => child.children ?? []).find(child => child.id === 'settings-reset');
+assert.ok(resetButton, 'the panel offers a reset');
+resetButton.dispatch('click');
+assert.equal(panelSettings.get('fov'), DEFAULTS.fov, 'reset restores the defaults');
+
+// --- the menu chip opens the panel in the running game
+const menuChip = byId.get('menu-settings');
+assert.ok(menuChip, 'the pause menu has a settings chip');
+menuChip.dispatch('click');
+assert.equal(byId.get('settings-panel').hidden, false, 'clicking the chip opens the panel');
+assert.equal(menuChip.classList.contains('active'), true, 'and marks the chip active');
+menuChip.dispatch('click');
+assert.equal(byId.get('settings-panel').hidden, true, 'clicking again closes it');
+assert.equal(menuChip.classList.contains('active'), false, 'and clears the active mark');
+
+// --- HUD readouts are written through the real ids
+const game2 = game;                        // the instance this suite has been driving
+game2.ui.setStatus({
+  fps: 61, position: { x: 1, y: 2, z: 3 }, biome: 'swamp', seed: 2408, clock: 0.5,
+  flying: false, blocksPlaced: 4, broken: 9, walked: 21.4, weather: 'rain',
+  facing: 'west', underfoot: 'Diamond ore', breath: 0.42, underwater: true,
+});
+assert.equal(byId.get('hud-weather').textContent, 'rain', 'the sky readout updates');
+assert.equal(byId.get('hud-facing').textContent, 'west', 'so does the compass');
+assert.equal(byId.get('hud-mined').textContent, '9', 'and the mined counter');
+assert.equal(byId.get('hud-walked').textContent, '21 m', 'the walk counter is rounded for the HUD');
+assert.equal(byId.get('target-label').textContent, 'Diamond ore', 'the crosshair names the block');
+assert.equal(byId.get('breath').hidden, false, 'the breath bar shows while submerged');
+assert.equal(byId.get('breath-fill').style.width, '42%', 'and fills to the remaining air');
+assert.equal(byId.get('breath-fill').classList.contains('low'), false, 'half a lung is not a warning');
+game2.ui.setStatus({
+  fps: 61, position: { x: 1, y: 2, z: 3 }, biome: 'swamp', seed: 2408, clock: 0.5,
+  flying: false, blocksPlaced: 4, broken: 9, walked: 21.4, weather: 'rain',
+  facing: 'west', underfoot: 'Diamond ore', breath: 0.12, underwater: true,
+});
+assert.equal(byId.get('breath-fill').style.width, '12%', 'the bar keeps up with the drain');
+assert.ok(byId.get('breath-fill').classList.contains('low'), 'and warns when it runs low');
+game2.ui.setStatus({
+  fps: 61, position: { x: 1, y: 2, z: 3 }, biome: 'swamp', seed: 2408, clock: 0.5,
+  flying: false, blocksPlaced: 4, broken: 9, walked: 21.4, weather: 'clear',
+  facing: 'west', underfoot: '', breath: 1, underwater: false,
+});
+assert.equal(byId.get('breath').hidden, true, 'and hides again at the surface');
+assert.equal(byId.get('target-label').textContent, '', 'the block name clears when nothing is aimed at');
+game2.ui.setBiomeReadout(false);
+game2.ui.setScale(130);
+assert.equal(game2.ui.scale, 130, 'the HUD scale can be set');
+game2.ui.setBiomeReadout(true);
+
 console.log('web DOM smoke test passed — %d ids from index.html, menu, pause, drag-look and seeds all wired'
   .replace('%d', ids.length));
