@@ -60,8 +60,9 @@ function spread(value, factor = 2.4) {
 }
 
 export class VoxelWorld {
-  constructor(seed) {
+  constructor(seed, { flat = false } = {}) {
     this.seed = seed >>> 0;
+    this.flat = Boolean(flat);
     this.noise = new Noise(this.seed);
     this.data = new Uint8Array(WORLD_X * WORLD_Y * WORLD_Z);
     // A second byte per cell for things that are not the block itself: which way a door swings, which
@@ -73,7 +74,8 @@ export class VoxelWorld {
     this.waterQueue = [];             // cells whose neighbours get a chance to flood each tick
     this.continentMean = 0.42;
     this.calibrate();
-    this.generate();
+    if (this.flat) this.generateFlat();
+    else this.generate();
     // The light grid is built lazily: nothing floods until the first time a mesh asks for a light
     // level, which is exactly when the picture needs it.
     this.light = new LightEngine(this);
@@ -102,6 +104,10 @@ export class VoxelWorld {
   }
 
   /** Cell metadata: door open state, stair facing, ladder side, bed pillow. */
+  metaAt(x, y, z) {
+    return this.inside(x, y, z) ? this.meta[VoxelWorld.index(x, y, z)] : 0;
+  }
+
   getMeta(x, y, z) {
     if (!this.inside(x, y, z)) return 0;
     return this.meta[VoxelWorld.index(x, y, z)];
@@ -153,7 +159,6 @@ export class VoxelWorld {
     if (!id) return null;
     const block = blockById(id);
     if (!block.solid && !block.interactive) return null;
-    if (block.interactive === 'door' && this.isDoorOpen(x, y, z)) return null;
     const meta = this.getMeta(x, y, z);
     return shapeBoxes(block, meta, (dx, dz) => this.holdsConnector(x + dx, y, z + dz));
   }
@@ -170,7 +175,8 @@ export class VoxelWorld {
 
   /**
    * True when a box overlaps anything solid. Partial blocks only occupy the boxes they actually
-   * fill, so you can walk under a stair, stand on a slab at half height, and pass an open door.
+   * fill, so you can walk under a stair, stand on a slab at half height, and walk through an open
+   * door — its leaf is a wafer against the frame, so it only catches you if you hug that wall.
    */
   overlapsSolid(minX, minY, minZ, maxX, maxY, maxZ) {
     const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-9);
@@ -227,6 +233,9 @@ export class VoxelWorld {
 
   /** Chest contents at a cell, created on demand. */
   chestAt(x, y, z, create = false) {
+    // A chest has to be somewhere: this refuses nonsense coordinates instead of filing a phantom
+    // chest under "NaN" and handing it back forever.
+    if (!this.inside(x, y, z)) return null;
     const key = `${x},${y},${z}`;
     if (!this.chests.has(key) && create) this.chests.set(key, new Map());
     return this.chests.get(key) ?? null;
@@ -268,7 +277,13 @@ export class VoxelWorld {
     }
     if (chests) {
       for (const [key, contents] of Object.entries(chests)) {
-        this.chests.set(key, new Map(Object.entries(contents).map(([id, count]) => [Number(id), count])));
+        const [x, y, z] = String(key).split(',').map(Number);
+        if (!this.inside(x, y, z) || !contents) continue;
+        // Counts and ids are untrusted: a hand-edited save must not poison the world.
+        const kept = Object.entries(contents)
+          .map(([id, count]) => [Number(id), Math.max(0, Math.floor(Number(count)) || 0)])
+          .filter(([id, count]) => Number.isFinite(id) && id > 0 && count > 0);
+        this.chests.set(key, new Map(kept));
       }
     }
   }
@@ -374,6 +389,8 @@ export class VoxelWorld {
   continent(x, z) { return this.noise.fbm2(x * 0.0038, z * 0.0038, 5); }
 
   surfaceHeight(x, z) {
+    // A sandbox world has one level, and it is the same everywhere.
+    if (this.flat) return this.flatHeight;
     const land = clamp01((this.continent(x, z) - (this.continentMean - 0.065)) / 0.14);
     // A ridged noise only bites on high ground, which keeps plains flatter and makes real peaks.
     const ridge = Math.abs(this.noise.fbm2(x * 0.011 + 31, z * 0.011 - 17, 3) - 0.5) * 2;
@@ -386,6 +403,7 @@ export class VoxelWorld {
   }
 
   biomeAt(x, z) {
+    if (this.flat) return 0;                                      // a sandbox world is all plains
     const temperature = spread(this.noise.fbm2(x * 0.0031 + 7.3, z * 0.0031 + 2.1, 3));
     const moisture = spread(this.noise.fbm2(x * 0.0043 - 4.7, z * 0.0043 + 9.4, 3), 2.6);
     const height = this.surfaceHeight(x, z);
@@ -682,6 +700,48 @@ export class VoxelWorld {
   }
 
   /** Advance one world tick of falling sand, saplings and leaf decay. */
+  /**
+   * A sandbox world: a flat plateau of grass on dirt over stone, sea level well below the surface,
+   * a scattering of trees, flowers and a couple of boulders so it does not look like a blank plane.
+   */
+  generateFlat({ height = 28 } = {}) {
+    this.flatHeight = height;
+    for (let z = 0; z < WORLD_Z; z++) {
+      for (let x = 0; x < WORLD_X; x++) {
+        for (let y = 0; y <= height; y++) {
+          const id = y === 0 ? OBSIDIAN : y === height ? GRASS : y >= height - 3 ? DIRT : STONE;
+          this.set(x, y, z, id);
+        }
+      }
+    }
+    // Trees on a coarse grid, thinned by hash noise, plus the odd flower: deterministic per seed.
+    for (let z = 4; z < WORLD_Z - 4; z += 7) {
+      for (let x = 4; x < WORLD_X - 4; x += 7) {
+        const roll = hashCoords(x, z, this.seed, 91);
+        if (roll > 0.34) continue;
+        // plantTree takes the *ground* level and plants upward from there, exactly like the
+        // generated worlds do.
+        this.plantTree(x, z, height, 0, false);
+      }
+    }
+    for (let z = 0; z < WORLD_Z; z += 3) {
+      for (let x = 0; x < WORLD_X; x += 3) {
+        if (this.get(x, height + 1, z) !== AIR) continue;
+        const roll = hashCoords(x, z, this.seed, 37);
+        if (roll < 0.06) this.set(x, height + 1, z, FLOWER);
+        else if (roll < 0.12) this.set(x, height + 1, z, TALL_GRASS);
+        else if (roll > 0.985) this.set(x, height + 1, z, PUMPKIN);
+      }
+    }
+    // Same contract as generate(): from here on, edits simulate and light can be scanned.
+    this.ready = true;
+    this.fallQueue = new Set();
+    this.saplings = new Map();
+    this.age = 0;
+    this.flat = true;
+    return height;
+  }
+
   worldTick(rng = Math.random) {
     const moved = [];
     if (this.fallQueue?.size) {

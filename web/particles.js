@@ -61,6 +61,29 @@ export class Particles {
   }
 
   /** Water: a ring of droplets that fall back down. */
+  /**
+   * A raindrop hitting the ground: a few droplets kicked up plus a flat ring, greedy on purpose so
+   * heavy rain reads as rain and not as a haze.
+   */
+  rainSplash(x, y, z, wet = 1) {
+    const drops = 2 + Math.round(3 * wet);
+    for (let i = 0; i < drops; i++) {
+      const angle = (i / drops) * Math.PI * 2 + Math.random() * 0.6;
+      const speed = 0.5 + Math.random() * 0.7 * wet;
+      const particle = this.take();
+      particle.x = x; particle.y = y + 0.06; particle.z = z;
+      particle.vx = Math.cos(angle) * speed;
+      particle.vz = Math.sin(angle) * speed;
+      particle.vy = 1.1 + Math.random() * 0.8 * wet;
+      particle.life = 0.28 + Math.random() * 0.18;
+      particle.maxLife = particle.life;
+      particle.size = 0.05 + Math.random() * 0.03;
+      particle.r = 0.72; particle.g = 0.85; particle.b = 0.98; particle.a = 0.8;
+      particle.drag = 0.82; particle.gravity = 3.4;
+    }
+    return drops;
+  }
+
   splash(x, y, z, count = 16) {
     for (let i = 0; i < count; i++) {
       const particle = this.take();

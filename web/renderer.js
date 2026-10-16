@@ -3,8 +3,9 @@
  * animated translucent water, and the wireframe highlight around the aimed block.
  */
 
-import { CHUNK, CHUNKS_X, CHUNKS_Z, WORLD_Y } from './constants.js';
+import { CHUNK, CHUNKS_X, CHUNKS_Z, WORLD_Y, blockById } from './constants.js';
 import { buildChunkMesh } from './mesher.js';
+import { shapeBoxes } from './shapes.js';
 import { boxVisible, createProgram, deleteMesh, drawMesh, extractPlanes, multiply, perspective, translation, uploadMesh, view } from './gl.js';
 
 const SKY_VERTEX = `
@@ -20,8 +21,8 @@ void main() {
 const SKY_FRAGMENT = `
 precision highp float;
 varying vec3 vDirection;
-uniform vec3 uZenith, uHorizon, uGround, uSunColor, uSunDirection, uCamera;
-uniform float uNight, uTime, uCloud, uStorm;
+uniform vec3 uZenith, uHorizon, uGround, uSunColor, uSunDirection, uCamera, uMoonDirection;
+uniform float uNight, uTime, uCloud, uStorm, uAurora;
 float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float valueNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -39,6 +40,18 @@ void main() {
   float sun = max(dot(direction, uSunDirection), 0.0);
   color += uSunColor * pow(sun, 260.0) * 1.7;
   color += uSunColor * pow(sun, 9.0) * 0.22;
+  // The disc itself, so the glow has a centre you can point at.
+  color += uSunColor * smoothstep(0.99955, 0.99985, sun) * 2.4;
+  // The moon rides opposite the sun, with a crescent carved out of it.
+  float moon = max(dot(direction, uMoonDirection), 0.0);
+  float crescent = max(dot(direction, normalize(uMoonDirection + vec3(0.035, 0.02, 0.0))), 0.0);
+  float disc = smoothstep(0.99950, 0.99985, moon);
+  color = mix(color, vec3(0.94, 0.95, 1.0) * (1.15 - 0.25 * uNight), disc * smoothstep(0.9996, 0.9999, crescent) * 0.95);
+  // Two planets, high in the night sky: a warm one and a cold one.
+  float mars = smoothstep(0.99980, 0.99994, dot(direction, normalize(vec3(-0.42, 0.72, -0.55))));
+  float venus = smoothstep(0.99982, 0.99996, dot(direction, normalize(vec3(0.66, 0.55, 0.5))));
+  color += vec3(1.0, 0.55, 0.38) * mars * uNight * 0.9;
+  color += vec3(0.85, 0.9, 1.0) * venus * uNight * 0.8;
   if (direction.y > 0.015 && uCloud > 0.01) {
     float plane = 132.0;
     vec2 point = uCamera.xz + direction.xz * (plane - uCamera.y) / max(direction.y, 0.02);
@@ -47,6 +60,15 @@ void main() {
     float clouds = smoothstep(0.5, 0.78, n) * smoothstep(0.015, 0.16, direction.y);
     vec3 tint = mix(vec3(1.0, 0.99, 0.96), uSunColor, 0.3) * (0.95 - 0.45 * uNight);
     color = mix(color, tint, clouds * uCloud * 0.9);
+  }
+  // An aurora over cold biomes: two curtains of colour waving above the horizon.
+  if (uAurora > 0.01 && direction.y > 0.015) {
+    float wave = sin(direction.x * 5.5 + direction.z * 2.0 + uTime * 0.22) * 0.5 + 0.5;
+    float wave2 = sin(direction.x * 11.0 - direction.z * 3.5 + uTime * 0.35) * 0.5 + 0.5;
+    float curtain = smoothstep(0.03, 0.22, direction.y) * smoothstep(0.62, 0.16, direction.y);
+    vec3 green = vec3(0.30, 1.0, 0.52);
+    vec3 violet = vec3(0.55, 0.42, 1.0);
+    color += mix(green, violet, wave2) * curtain * (0.16 + 0.34 * wave) * uAurora;
   }
   if (uNight > 0.03 && direction.y > 0.02) {
     vec2 cell = floor(direction.xz / max(direction.y, 0.18) * 110.0);
@@ -68,8 +90,10 @@ varying vec3 vColor;
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying float vDistance;
+varying float vWater;
 void main() {
   vec3 world = aPosition + uChunkOffset;
+  vWater = uWater;
   if (uWater > 0.5) {
     // Water: two offset waves and a half-block drop so the surface reads as liquid.
     world.y += sin(uTime * 1.4 + world.x * 0.55 + world.z * 0.7) * 0.05
@@ -82,6 +106,8 @@ void main() {
     world.z += cos(phase * 0.8) * sway * 0.72;
     world.y += sin(phase * 1.7) * sway * 0.22;
   }
+  // Re-derive the water normal from the same two waves, so highlights follow the swell.
+  vNormal = vNormal;
   gl_Position = uViewProjection * vec4(world, 1.0);
   vColor = aColor;
   vNormal = aNormal;
@@ -95,10 +121,12 @@ varying vec3 vColor;
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying float vDistance;
-uniform vec3 uFogColor, uSunDirection;
-uniform float uFogNear, uFogFar, uAlpha;
+uniform vec3 uFogColor, uSunDirection, uCamera;
+uniform float uFogNear, uFogFar, uAlpha, uTime;
+varying float vWater;
 float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 void main() {
+  vec3 viewDir = normalize(uCamera - vWorld);
   vec2 uv = abs(vNormal.y) > 0.5 ? vWorld.xz : abs(vNormal.x) > 0.5 ? vWorld.zy : vWorld.xy;
   vec2 scaled = uv * 6.0;
   float grain = hash21(floor(scaled) + vNormal.xy * 17.0);
@@ -107,6 +135,22 @@ void main() {
   float edge = smoothstep(0.0, 0.05, min(min(cell.x, 1.0 - cell.x), min(cell.y, 1.0 - cell.y)));
   color *= mix(0.91, 1.0, edge);
   color *= 0.87 + 0.13 * max(dot(vNormal, uSunDirection), 0.0);
+  if (vWater > 0.5 && vNormal.y > 0.5) {
+    // The surface of the sea: churn the normal with the swell, then let the sun sparkle on it.
+    vec2 ripple = vec2(
+      sin(uTime * 1.5 + vWorld.x * 0.85 + vWorld.z * 0.4),
+      sin(uTime * 1.15 + vWorld.z * 0.95 - vWorld.x * 0.35)
+    ) * 0.16;
+    vec3 normal = normalize(vec3(ripple.x, 1.0, ripple.y));
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+    vec3 half = normalize(uSunDirection + viewDir);
+    float glitter = pow(max(dot(normal, half), 0.0), 90.0);
+    color = mix(color, uFogColor * 0.55 + vec3(0.16, 0.30, 0.42), fresnel * 0.65);
+    color += uSunDirection * glitter * 0.85;
+    // A thin bright crest where the swell crosses a block edge.
+    float crest = smoothstep(0.72, 0.98, ripple.x + ripple.y + 0.32);
+    color = mix(color, color * 1.35 + vec3(0.06), crest * 0.5);
+  }
   float fog = smoothstep(uFogNear, uFogFar, vDistance);
   color = mix(color, uFogColor, fog);
   gl_FragColor = vec4(color, uAlpha);
@@ -174,8 +218,27 @@ uniform float uMode, uTime, uAmount, uRatio;
 varying vec2 vUv;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 void main() {
+  if (uMode > 2.5) {
+    // Underwater (mode 3): a blue wash with sliding caustics and a darker edge, so being submerged
+    // looks like being under water rather than looking through a blue filter.
+    vec2 p = vUv * 15.0 + vec2(uTime * 0.07, uTime * 0.05);
+    float caustic = 0.0;
+    vec2 cell = floor(p);
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        vec2 offset = vec2(hash(cell + vec2(float(i), float(j))),
+                           hash(cell + vec2(float(i) + 5.0, float(j) + 3.0)));
+        float spot = 1.0 - smoothstep(0.0, 0.55, distance(fract(p), offset));
+        caustic = max(caustic, spot * spot);
+      }
+    }
+    float vignette = smoothstep(1.05, 0.25, distance(vUv, vec2(0.5)));
+    vec3 colour = mix(uTint.rgb, vec3(0.45, 0.95, 1.0), caustic * 0.5 * vignette) * (0.75 + 0.35 * vignette);
+    gl_FragColor = vec4(colour, uTint.a * (0.78 + 0.22 * vignette));
+    return;
+  }
   if (uMode < 0.5) {
-    gl_FragColor = uTint;                       // plain coloured wash (underwater, damage)
+    gl_FragColor = uTint;                       // plain coloured wash (damage, weather)
     return;
   }
   // Rain (uMode 1) or snow (uMode 2): streaks and flakes that fall across the screen.
@@ -241,7 +304,11 @@ export function skyPalette(clock) {
   return {
     zenith, horizon, ground, sunColor,
     sunDirection: [sunDirection[0] / length, sunDirection[1] / length, sunDirection[2] / length],
+    // The moon is on the other side of the sky from the sun, and it owns the night.
+    moonDirection: [-sunDirection[0] / length, -sunDirection[1] / length, -sunDirection[2] / length],
     night: 1 - day,
+    // Aurora strength: only at night, and the caller raises it further in cold biomes.
+    aurora: clamp01((1 - day - 0.45) / 0.4) * clamp01(1 - dusk),
     fog: mix3(horizon, zenith, 0.25),
   };
 }
@@ -268,7 +335,8 @@ export class Renderer {
     // One cube's worth of vertices, re-uploaded every frame for the particles and the held block.
     this.handVertices = new Float32Array(cubeTrianglesVertices());
     this.handBuffer = this.createBuffer(this.handVertices);
-    this.heldModel = new Float32Array(16);
+    this.heldModel = new Float32Array(16);      // the box being drawn
+    this.heldFrame = new Float32Array(16);      // the swinging hand itself
     this.particleBuffer = gl.createBuffer();
     this.particleData = new Float32Array(0);
     this.stats = { draws: 0, chunks: 0, meshed: 0, vertices: 0 };
@@ -368,15 +436,18 @@ export class Renderer {
    * @param {object} [frame.held]        the block in hand, e.g. { block, swing, bright }
    * @param {object} [frame.weather]     { intensity, snow, storm }
    * @param {number} [frame.submerged]   1 when the camera is inside water
+   * @param {number} [frame.aurora]       1 in cold biomes, where the night sky lights up
    * @param {number} [frame.flash]       red damage flash, 0..1
    * @param {Array}  [frame.particles]   particle quads from the particle pool
    */
   render({ world, player, time, clock, target, fov, mineProgress = 0, held = null, weather = null,
-           submerged = 0, flash = 0, particles = null, viewDistance = null,
+           submerged = 0, flash = 0, particles = null, viewDistance = null, aurora = 0,
            wind = 1, cameraDistance = 0, heat = 0, thirdPerson = false }) {
     const gl = this.gl;
     this.resize();
     const palette = skyPalette(clock);
+    // Cold biomes get an aurora after dark; everywhere else keeps its stars.
+    palette.aurora *= aurora;
     let eye = [player.x, player.eyeY + (player.eyeOffset ?? 0), player.z];
     // Third person: pull the camera back along the view direction, above the player's shoulders.
     if (cameraDistance > 0) {
@@ -415,11 +486,13 @@ export class Renderer {
     if (thirdPerson) this.drawAvatar(player);
     if (particles && particles.length) this.drawParticles(particles);
     if (target) {
-      this.drawHighlight(target);
-      if (mineProgress > 0.01) this.drawCracks(target, mineProgress);
+      this.drawHighlight(target, world);
+      if (mineProgress > 0.01) this.drawCracks(target, mineProgress, world);
     }
-    if (held && !thirdPerson) this.drawHeld(held.block, time, held.swing ?? 0, held.bright ?? 1, palette);
-    if (submerged) this.drawTint([0.09, 0.32, 0.52, 0.34 * submerged], 0);
+    if (held && !thirdPerson) {
+      this.drawHeld(held.block, time, held.swing ?? 0, held.bright ?? 1, palette, held.meta ?? 0);
+    }
+    if (submerged) this.drawTint([0.09, 0.32, 0.52, 0.42 * submerged], 3, submerged, time);
     // Standing in lava washes the screen orange, in proportion to how deep you are.
     if (heat > 0.01) this.drawTint([0.95, 0.32, 0.06, Math.min(0.42, heat * 0.42)], 0);
     if (flash > 0.01) this.drawTint([0.75, 0.12, 0.12, Math.min(0.55, flash) * 0.6], 0);
@@ -456,13 +529,14 @@ export class Renderer {
   }
 
   /** A dark, growing shell over the block being mined — the crack overlay. */
-  drawCracks(target, progress) {
+  drawCracks(target, progress, world = null) {
     const gl = this.gl, program = this.lineProgram;
     gl.useProgram(program.program);
     gl.uniformMatrix4fv(program.uniforms.uViewProjection, false, this.viewProjection);
-    translation(this.model, target.x + 0.5, target.y + 0.5, target.z + 0.5);
+    const height = shapeHeight(world, target);
+    translation(this.model, target.x + 0.5, target.y + height / 2, target.z + 0.5);
     const scale = 1.0 + 0.006 + progress * 0.02;
-    this.model[0] *= scale; this.model[5] *= scale; this.model[10] *= scale;
+    this.model[0] *= scale; this.model[5] *= height * scale; this.model[10] *= scale;
     gl.uniformMatrix4fv(program.uniforms.uModel, false, this.model);
     const alpha = 0.12 + progress * 0.42;
     gl.uniform4f(program.uniforms.uColor, 0.03, 0.03, 0.05, alpha);
@@ -528,21 +602,23 @@ export class Renderer {
     gl.disable(gl.BLEND);
   }
 
-  /** The block in the player's hand: a small cube in the lower right, with a swing animation. */
-  drawHeld(block, time, swing, bright, palette) {
+  /**
+   * The block in the player's hand, in the lower right, tipping as it swings. Partial blocks keep
+   * their shape — a held torch is a stick, a held fence is a post — because the view model reads
+   * the same `shapeBoxes` the world does.
+   */
+  drawHeld(block, time, swing, bright, palette, meta = 0) {
     const gl = this.gl, program = this.handProgram;
     gl.useProgram(program.program);
     gl.clear(gl.DEPTH_BUFFER_BIT);            // the hand never clips into the world
     gl.uniformMatrix4fv(program.uniforms.uViewProjection, false, this.viewProjection);
-    gl.uniform3fv(program.uniforms.uColor, block.top);
     gl.uniform3fv(program.uniforms.uLight, palette?.sunColor ?? [1, 1, 1]);
     gl.uniform1f(program.uniforms.uBright, bright);
     gl.uniform1f(program.uniforms.uUnderwater, 0);
     // A cube held a little to the right and below the eye, tipping as it swings.
     const swingAngle = Math.sin(swing * Math.PI) * 0.9;
     const bob = Math.sin(time * 1.6) * 0.012;
-    buildHeldModel(this.heldModel, swingAngle, bob);
-    gl.uniformMatrix4fv(program.uniforms.uModel, false, this.heldModel);
+    const held = buildHeldModel(this.heldFrame, swingAngle, bob);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.handBuffer);
     const stride = 6 * 4;
     gl.enableVertexAttribArray(program.attributes.aPosition);
@@ -550,8 +626,26 @@ export class Renderer {
     gl.enableVertexAttribArray(program.attributes.aNormal);
     gl.vertexAttribPointer(program.attributes.aNormal, 3, gl.FLOAT, false, stride, 3 * 4);
     gl.disable(gl.CULL_FACE);
-    gl.drawArrays(gl.TRIANGLES, 0, 36);
-    this.stats.draws++;
+
+    const boxes = block?.shape && block.shape !== 'cube' ? shapeBoxes(block, meta) : null;
+    if (!boxes || boxes.length === 1) {
+      // The common case: one box, so the cube only needs nudging into place.
+      const only = boxes?.[0];
+      if (only) offsetHeldModel(this.heldModel, held, only);
+      gl.uniformMatrix4fv(program.uniforms.uModel, false, this.heldModel);
+      gl.uniform3fv(program.uniforms.uColor, only?.colour ?? block.top);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+      this.stats.draws++;
+    } else {
+      // A chest, a bed, a door: draw each box as its own squeezed cube.
+      for (const part of boxes) {
+        offsetHeldModel(this.heldModel, held, part);
+        gl.uniformMatrix4fv(program.uniforms.uModel, false, this.heldModel);
+        gl.uniform3fv(program.uniforms.uColor, part.colour ?? block.top);
+        gl.drawArrays(gl.TRIANGLES, 0, 36);
+        this.stats.draws++;
+      }
+    }
     gl.enable(gl.CULL_FACE);
   }
 
@@ -614,6 +708,8 @@ export class Renderer {
     gl.uniform3fv(program.uniforms.uSunDirection, palette.sunDirection);
     gl.uniform3fv(program.uniforms.uCamera, eye);
     gl.uniform1f(program.uniforms.uNight, palette.night);
+    gl.uniform3fv(program.uniforms.uMoonDirection, palette.moonDirection);
+    gl.uniform1f(program.uniforms.uAurora, palette.aurora * (weather ? Math.max(0, 1 - weather.intensity * 2) : 1));
     gl.uniform1f(program.uniforms.uCloud, weather ? 1 + weather.intensity * 2 : 1);
     gl.uniform1f(program.uniforms.uStorm, weather ? Math.min(1, weather.intensity * (weather.storm ? 1.4 : 0.8)) : 0);
     gl.uniform1f(program.uniforms.uTime, time);
@@ -690,13 +786,16 @@ export class Renderer {
     gl.depthMask(true);
   }
 
-  drawHighlight(target) {
+  drawHighlight(target, world = null) {
     const gl = this.gl, program = this.lineProgram;
     gl.useProgram(program.program);
     gl.uniformMatrix4fv(program.uniforms.uViewProjection, false, this.viewProjection);
-    translation(this.model, target.x + 0.5, target.y + 0.5, target.z + 0.5);
+    // A slab is highlighted at half height instead of a whole block, which is what the outline on a
+    // partially filled cell should look like.
+    const height = shapeHeight(world, target);
+    translation(this.model, target.x + 0.5, target.y + height / 2, target.z + 0.5);
     const scale = 1.004;
-    this.model[0] *= scale; this.model[5] *= scale; this.model[10] *= scale;
+    this.model[0] *= scale; this.model[5] *= height * scale; this.model[10] *= scale;
     gl.uniformMatrix4fv(program.uniforms.uModel, false, this.model);
     gl.uniform4f(program.uniforms.uColor, 0.06, 0.07, 0.09, 0.85);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer);
@@ -707,6 +806,17 @@ export class Renderer {
     gl.drawArrays(gl.LINES, 0, 24);
     gl.disable(gl.BLEND);
   }
+}
+
+/**
+ * How tall the outline of a block should be: a full cube, or the height of a slab, a stair or a bed.
+ */
+export function shapeHeight(world, target) {
+  if (!world || typeof world.blockTop !== 'function' || !target) return 1;
+  const block = blockById(world.get(target.x, target.y, target.z));
+  if (!block.shape || block.shape === 'cube') return 1;
+  const top = world.blockTop(target.x, target.y, target.z);
+  return top === null ? 1 : Math.max(0.06, Math.min(1, top - target.y));
 }
 
 /** A unit cube as 36 triangle vertices, in the same [-0.5, 0.5] space as the highlight lines. */
@@ -744,7 +854,7 @@ function cubeTrianglesVertices() {
 }
 
 /** Place the held cube in view space: offset to the right, tilted by the swing, with a gentle bob. */
-function buildHeldModel(out, swingAngle, bob) {
+export function buildHeldModel(out, swingAngle, bob) {
   const cos = Math.cos(swingAngle), sin = Math.sin(swingAngle);
   const tilt = 0.35 - swingAngle * 0.35;
   const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
@@ -755,6 +865,31 @@ function buildHeldModel(out, swingAngle, bob) {
   out[4] = -sinT * cos;         out[5] = cosT * scale;         out[6] = -sinT * sin;         out[7] = 0;
   out[8] = -sin * scale;        out[9] = 0;                    out[10] = cos * scale;        out[11] = 0;
   out[12] = x;                  out[13] = y;                   out[14] = z;                  out[15] = 1;
+  return out;
+}
+
+/**
+ * Fit a unit cube to one cell-local box inside the held model's frame. `held` is the rigid
+ * transform the hand uses; the box only shifts the cube and squeezes it, so the six values that
+ * matter are read straight off the held matrix's columns.
+ */
+export function offsetHeldModel(out, held, part) {
+  const size = [part.max[0] - part.min[0], part.max[1] - part.min[1], part.max[2] - part.min[2]];
+  const centre = [
+    (part.min[0] + part.max[0]) / 2 - 0.5,
+    (part.min[1] + part.max[1]) / 2 - 0.5,
+    (part.min[2] + part.max[2]) / 2 - 0.5,
+  ];
+  for (let axis = 0; axis < 3; axis++) {
+    const column = axis * 4;
+    const scale = size[axis];
+    out[column] = held[column] * scale;
+    out[column + 1] = held[column + 1] * scale;
+    out[column + 2] = held[column + 2] * scale;
+  }
+  out[12] = held[12] + held[0] * centre[0] + held[4] * centre[1] + held[8] * centre[2];
+  out[13] = held[13] + held[1] * centre[0] + held[5] * centre[1] + held[9] * centre[2];
+  out[14] = held[14] + held[2] * centre[0] + held[6] * centre[1] + held[10] * centre[2];
   return out;
 }
 

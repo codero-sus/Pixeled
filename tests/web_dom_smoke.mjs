@@ -35,7 +35,7 @@ class Element {
     this.children = [];
     this.listeners = new Map();
     this.dataset = {};
-    this.style = {};
+    this.style = { setProperty(name, value) { this[name] = value; }, removeProperty(name) { delete this[name]; } };
     this.hidden = false;
     this.value = '';
     this.textContent = '';
@@ -54,6 +54,14 @@ class Element {
         return wanted;
       },
     };
+    // className and classList are two views of one set, exactly like the real DOM.
+    Object.defineProperty(this, 'className', {
+      get() { return [...classes].join(' '); },
+      set(value) {
+        classes.clear();
+        for (const name of String(value).split(/\s+/)) if (name) classes.add(name);
+      },
+    });
   }
   addEventListener(type, handler) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -83,6 +91,7 @@ class Element {
       this.ctx2d = {
         fillCalls: 0, fillStyle: '', strokeStyle: '', lineWidth: 1,
         clearRect() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {},
+        bezierCurveTo() {}, save() {}, restore() {}, clip() {}, rect() {},
         fill() { this.fillCalls++; }, stroke() {}, fillRect() {},
       };
     }
@@ -541,6 +550,105 @@ assert.ok(cubeCanvas, 'the slot holds a canvas');
 assert.equal(cubeCanvas.width, 34, 'drawn at 34 pixels');
 assert.equal(cubeCanvas.getContext('2d').fillCalls, 3, 'three faces painted');
 assert.equal(game.ui.drawHotbarIcons(game.ui.hotbar, [null, null, null]), 3, 'every slot still gets a canvas, empty or not');
+
+// =============================================================== v3.5 shelves and panels
+
+for (const id of ['menu-surprise', 'mode-row', 'daily-card', 'daily-goals', 'menu-daily',
+  'challenge-list', 'challenges', 'close-challenges', 'challenge-share', 'challenge-day',
+  'challenge-seed', 'challenge-streak', 'challenge-streak-panel', 'hud-mode-chip', 'run-timer',
+  'recent-row', 'recent-title']) {
+  assert.ok(byId.has(id), `index.html defines #${id}`);
+}
+assert.match(markup, /<div class="mode-row" id="mode-row" role="radiogroup"/, 'the mode shelf is a radio group');
+assert.match(markup, /<div class="daily-card" id="daily-card">/, 'the daily challenge has a card');
+assert.match(markup, /<div class="daily-goals" id="daily-goals"><\/div>/, 'with a row for its goals');
+assert.match(markup, /<div class="recent-row" id="recent-row"><\/div>/, 'and a shelf for recent worlds');
+for (const rule of ['.mode-card', '.mode-card.active', '.daily-badge', '.recent-chip', '.mode-chip',
+  '.run-timer', '.challenge-row', '.challenge-bar']) {
+  assert.ok(stylesheet.includes(rule), `styles.css styles ${rule}`);
+}
+assert.match(stylesheet, /\.run-timer\.finished/, 'and marks a finished run');
+
+// --- the mode cards
+const { MODES } = await import('../web/modes.js');
+const { buildModeRow, buildDailyTeaser, buildRecentRow } = await import('../web/menu.js');
+const modeRow = byId.get('mode-row');
+assert.equal(buildModeRow(modeRow, MODES, { active: 'speedrun' }), MODES.length, 'a card per mode');
+assert.equal(modeRow.children.length, MODES.length, 'all on the shelf');
+const speedCard = modeRow.children.find(card => card.dataset.mode === 'speedrun');
+assert.ok(speedCard, 'the speedrun card exists');
+assert.equal(speedCard.classList.contains('active'), true, 'and is marked active');
+assert.equal(speedCard.getAttribute('aria-checked'), 'true', 'and announced as checked');
+assert.match(speedCard.innerHTML, /Speedrun/, 'the card names the mode');
+assert.match(speedCard.innerHTML, /TIMED · GOAL/, 'and carries its badge');
+assert.equal(speedCard.style['--mode-colour'], '#d0684f', 'and its colour');
+let modePicked = null;
+buildModeRow(modeRow, MODES, { active: 'survival', onPick: id => { modePicked = id; } });
+modeRow.children.find(card => card.dataset.mode === 'creative').dispatch('click');
+assert.equal(modePicked, 'creative', 'clicking a card picks that mode');
+
+// --- the daily card on the start screen
+const teaser = byId.get('daily-goals');
+const summary = [
+  { id: 'mine-30', label: 'Mine 30 blocks', icon: '⛏', complete: false },
+  { id: 'diamond-1', label: 'Find a diamond', icon: '◆', complete: true },
+];
+assert.equal(buildDailyTeaser(teaser, summary), 2, 'the teaser lists today goals');
+assert.equal(teaser.children.length, 2, 'as two chips');
+assert.equal(teaser.children[1].classList.contains('done'), true, 'the finished one is ticked');
+
+// --- recent worlds
+const recent = byId.get('recent-row');
+const recentTitle = byId.get('recent-title');
+let reopened = null;
+assert.equal(buildRecentRow(recent, recentTitle, [], () => {}), 0, 'no worlds, no shelf');
+assert.equal(recentTitle.hidden, true, 'and the heading hides with it');
+assert.equal(buildRecentRow(recent, recentTitle, [{ seed: 777, mode: 'creative' }, { seed: 2408, mode: 'survival' }],
+  entry => { reopened = entry; }), 2, 'two recent worlds');
+assert.equal(recentTitle.hidden, false, 'so the heading comes back');
+recent.children[0].dispatch('click');
+assert.deepEqual(reopened, { seed: 777, mode: 'creative' }, 'clicking a chip reopens that world');
+
+// --- the in-game chips
+const { formatTime } = await import('../web/modes.js');
+const modeChip = byId.get('hud-mode-chip');
+assert.equal(game.ui.setMode({ name: 'Speedrun', badge: 'TIMED · GOAL', colour: '#d0684f', icon: '⏱' }), true, 'the mode chip can be filled');
+assert.match(modeChip.textContent, /Speedrun/, 'with the mode name');
+assert.equal(modeChip.title, 'TIMED · GOAL', 'and the badge as its tooltip');
+assert.equal(modeChip.hidden, false, 'and it is visible');
+assert.equal(modeChip.style['--mode-colour'], '#d0684f', 'painted in the mode colour');
+const runTimer = byId.get('run-timer');
+assert.equal(game.ui.setRunTimer(true), true, 'the run clock can be shown');
+assert.equal(runTimer.hidden, false, 'and is visible');
+assert.equal(game.ui.setRunTime(0), 0, 'the clock starts at zero');
+assert.equal(runTimer.textContent, formatTime(0), 'formatted like a stopwatch');
+game.ui.setRunTime(12.34);
+assert.equal(runTimer.textContent, '0:12.3', 'and counts in tenths');
+game.ui.setRunTime(12.34, 12.34);
+assert.equal(runTimer.textContent, '★ 0:12.3', 'a finished run gets a star');
+assert.equal(runTimer.classList.contains('finished'), true, 'and a green border');
+assert.equal(game.ui.setRunTimer(false), false, 'and the clock hides outside a speedrun');
+
+// --- the daily panel in-game
+const challengeRows = byId.get('challenge-list');
+const built = game.ui.buildChallenges([
+  { id: 'mine-30', label: 'Mine 30 blocks', icon: '⛏', progress: 0.5, have: 15, value: 30, complete: false },
+  { id: 'diamond-1', label: 'Find a diamond', icon: '◆', progress: 1, have: 1, value: 1, complete: true },
+], { day: '2026-10-16', streak: 3, best: 5, seed: 424242 });
+assert.equal(built, 2, 'the panel lists the goals');
+assert.equal(challengeRows.children.length, 2, 'one row each');
+assert.match(challengeRows.children[0].innerHTML, /15\/30/, 'half-done work shows its count');
+assert.match(challengeRows.children[0].innerHTML, /width:50%/, 'and its progress bar');
+assert.equal(challengeRows.children[1].classList.contains('complete'), true, 'a finished goal is marked complete');
+assert.match(challengeRows.children[1].innerHTML, /✓/, 'with a tick');
+assert.equal(byId.get('challenge-day').textContent, 'DAILY · 2026-10-16', 'the panel shows the day');
+assert.equal(byId.get('challenge-seed').textContent, '424242', 'and the seed');
+assert.match(byId.get('challenge-streak').textContent, /3 day streak · best 5/, 'and the streak');
+assert.deepEqual(game.ui.challengeProgress(), { done: 1, total: 2 }, 'the chip counts how many are done');
+assert.equal(game.ui.setChallenges(true), true, 'the panel opens');
+assert.equal(byId.get('challenges').hidden, false, 'and is on screen');
+assert.equal(game.ui.setChallenges(false), false, 'and closes again');
+assert.equal(byId.get('challenges').hidden, true, 'back off screen');
 
 console.log('web DOM smoke test passed — %d ids from index.html, menu, pause, drag-look and seeds all wired'
   .replace('%d', ids.length));

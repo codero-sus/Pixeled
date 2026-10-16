@@ -50,6 +50,16 @@ export class StartMenu {
     this.worldLine = document.getElementById('menu-world');
     this.controlLine = document.getElementById('menu-controls');
 
+    this.surprise = document.getElementById('menu-surprise');
+    this.modeRow = document.getElementById('mode-row');
+    this.dailyCard = document.getElementById('daily-card');
+    this.dailyGoals = document.getElementById('daily-goals');
+    this.dailyPlay = document.getElementById('menu-daily');
+    this.recentRow = document.getElementById('recent-row');
+    this.recentTitle = document.getElementById('recent-title');
+    this.surprise?.addEventListener('click', () => this.callbacks.surprise?.());
+    this.dailyPlay?.addEventListener('click', () => this.callbacks.daily?.());
+
     this.dragLook = false;
     this.splashIndex = Math.floor(Math.random() * SPLASHES.length);
     this.buttons.play?.addEventListener('click', () => this.callbacks.play?.());
@@ -98,8 +108,13 @@ export class StartMenu {
   }
 
   /** Tell the menu about the world it would resume, so Continue only appears when there is one. */
-  setWorld({ seed, hasSave, edits = 0 }) {
-    if (this.worldLine) this.worldLine.textContent = `seed ${seed ?? '—'}`;
+  setWorld({ seed, mode = null, flat = false, hasSave, edits = 0 }) {
+    if (this.worldLine) {
+      const parts = [`seed ${seed ?? '—'}`];
+      if (mode) parts.push(mode.toLowerCase());
+      if (flat) parts.push('flat');
+      this.worldLine.textContent = parts.join(' · ');
+    }
     if (this.buttons.continue) {
       if (hasSave) this.buttons.continue.removeAttribute('hidden');
       else this.buttons.continue.setAttribute('hidden', '');
@@ -167,4 +182,59 @@ export class StartMenu {
     if (code === 'KeyH') this.callbacks.help?.();
     return true;
   }
+}
+
+/**
+ * The mode cards. One card per mode, with the badge and hook the mode data carries, so the shelf
+ * reads like a games page rather than a settings list.
+ */
+export function buildModeRow(container, modes, { active = 'survival', onPick = () => {} } = {}) {
+  if (!container) return 0;
+  container.replaceChildren();
+  for (const mode of modes) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `mode-card${mode.id === active ? ' active' : ''}`;
+    card.dataset.mode = mode.id;
+    card.style.setProperty('--mode-colour', mode.colour);
+    card.setAttribute('aria-checked', String(mode.id === active));
+    card.innerHTML = `<span class="mode-icon">${mode.icon}</span>`
+      + `<span class="mode-name">${mode.name}</span>`
+      + `<span class="mode-badge">${mode.badge}</span>`
+      + `<span class="mode-hook">${mode.hook}</span>`;
+    card.title = mode.blurb;
+    card.addEventListener('click', () => onPick(mode.id));
+    container.append(card);
+  }
+  return modes.length;
+}
+
+/** The compact version of the daily goals for the start screen card. */
+export function buildDailyTeaser(container, summary) {
+  if (!container) return 0;
+  container.replaceChildren();
+  for (const goal of summary) {
+    const chip = document.createElement('span');
+    chip.className = `daily-goal${goal.complete ? ' done' : ''}`;
+    chip.innerHTML = `${goal.icon} ${goal.label}`;
+    container.append(chip);
+  }
+  return summary.length;
+}
+
+/** The recent-worlds row: one chip per seed, with the mode it was played in. */
+export function buildRecentRow(container, title, entries, onPick = () => {}) {
+  if (!container) return 0;
+  container.replaceChildren();
+  if (title) title.hidden = entries.length === 0;
+  for (const entry of entries) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'recent-chip';
+    chip.dataset.seed = String(entry.seed);
+    chip.innerHTML = `seed ${entry.seed}<small>${entry.mode ?? ''}</small>`;
+    chip.addEventListener('click', () => onPick(entry));
+    container.append(chip);
+  }
+  return entries.length;
 }

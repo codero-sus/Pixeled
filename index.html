@@ -47,12 +47,15 @@
     <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
     <div class="target-label" id="target-label" aria-hidden="true"></div>
     <div class="breath" id="breath" hidden><i id="breath-fill"></i></div>
+    <canvas class="hearts" id="hearts" width="200" height="20" aria-label="Health"></canvas>
 
     <div class="start-hint" id="start-hint">
       <b>Click to play</b>
       <span>WASD move · Space jump · left click mine · right click build · F to fly</span>
     </div>
 
+    <div class="mode-chip" id="hud-mode-chip" hidden></div>
+    <div class="run-timer" id="run-timer" hidden>0:00.0</div>
     <canvas class="minimap" id="minimap" width="96" height="96" aria-label="Map of nearby terrain"></canvas>
 
     <pre class="debug hidden" id="debug" hidden aria-live="off"></pre>
@@ -95,6 +98,10 @@
           <span class="menu-button-label">New world</span>
           <span class="menu-button-sub">Roll another random seed</span>
         </button>
+        <button class="menu-button" id="menu-surprise" type="button">
+          <span class="menu-button-label">Surprise me</span>
+          <span class="menu-button-sub">Random seed, random mode, straight in</span>
+        </button>
         <button class="menu-button" id="menu-seed-toggle" type="button">
           <span class="menu-button-label">Play a seed…</span>
           <span class="menu-button-sub">Replay a world you liked</span>
@@ -109,6 +116,25 @@
           <button class="menu-chip" id="menu-sound" type="button">Sound: on</button>
         </div>
         <div class="settings-panel hidden" id="settings-panel" hidden aria-label="Settings"></div>
+
+        <h2 class="menu-shelf-title">Pick a mode</h2>
+        <div class="mode-row" id="mode-row" role="radiogroup" aria-label="Game mode"></div>
+
+        <h2 class="menu-shelf-title">Today's challenge</h2>
+        <div class="daily-card" id="daily-card">
+          <div class="daily-head">
+            <span class="daily-badge" id="challenge-day">DAILY CHALLENGE</span>
+            <span class="daily-seed">seed <b id="challenge-seed">—</b></span>
+          </div>
+          <div class="daily-goals" id="daily-goals"></div>
+          <div class="daily-foot">
+            <span id="challenge-streak">Finish all three today to start a streak</span>
+            <button class="menu-chip" id="menu-daily" type="button">Play today's seed</button>
+          </div>
+        </div>
+
+        <h2 class="menu-shelf-title" id="recent-title" hidden>Recent worlds</h2>
+        <div class="recent-row" id="recent-row"></div>
       </div>
 
       <footer class="menu-foot">
@@ -116,7 +142,7 @@
         <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
       </footer>
     </section>
-    <div class="menu-version">Pixeled 3D · v3.4 · 48 blocks · craft, build, sleep</div>
+    <div class="menu-version" id="menu-version">Pixeled 3D · v3.5 · 49 blocks · 4 modes · daily seeds · craft, build, sleep</div>
   </div>
 
   <!-- ------------------------------------------------------------- block palette -->
@@ -169,6 +195,30 @@
 </div>
 
 <div class="sleep" id="sleep" hidden></div>
+
+<div class="overlay modal hidden" id="challenges" hidden>
+  <section class="card">
+    <h2>Daily challenge</h2>
+    <p class="muted">One world, three goals, the same for everyone playing today. Press <kbd>J</kbd> to peek.</p>
+    <div class="challenge-list" id="challenge-list"></div>
+    <div class="daily-foot">
+      <span id="challenge-streak-panel">—</span>
+      <button class="ghost-button" id="challenge-share" type="button">Copy seed link</button>
+    </div>
+    <div class="modal-actions">
+      <button class="button" id="close-challenges" type="button">Done</button>
+    </div>
+  </section>
+</div>
+
+<div class="overlay modal death hidden" id="death" hidden>
+  <section class="card">
+    <h2>You died</h2>
+    <p class="death-cause" id="death-cause">You took a beating</p>
+    <p class="muted">Everything you were carrying is still in your bag. Respawn at your spawn point and carry on.</p>
+    <button class="primary-button" id="respawn" type="button">Respawn <span>→</span></button>
+  </section>
+</div>
 
 <div class="overlay modal hidden" id="help-modal" hidden>
     <section class="card">

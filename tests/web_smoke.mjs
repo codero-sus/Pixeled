@@ -9,6 +9,10 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+/** The source of a module, for assertions about the shaders and other embedded strings. */
+const source = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
 
 // =============================================================== pure modules
 
@@ -628,7 +632,7 @@ class StubElement {
     this.children = [];
     this.listeners = new Map();
     this.dataset = {};
-    this.style = {};
+    this.style = { setProperty(name, value) { this[name] = value; }, removeProperty(name) { delete this[name]; } };
     this.hidden = false;
     this.textContent = '';
     this.innerHTML = '';
@@ -647,6 +651,14 @@ class StubElement {
       contains: name => classes.has(name),
       get length() { return classes.size; },
     };
+    // className and classList are two views of one set, exactly like the real DOM.
+    Object.defineProperty(this, 'className', {
+      get() { return [...classes].join(' '); },
+      set(value) {
+        classes.clear();
+        for (const name of String(value).split(/\s+/)) if (name) classes.add(name);
+      },
+    });
   }
   addEventListener(type, handler) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -678,6 +690,8 @@ class StubElement {
         calls, fillStyle: '', strokeStyle: '', lineWidth: 1,
         clearRect: record('clearRect'), beginPath: record('beginPath'), closePath: record('closePath'),
         moveTo: record('moveTo'), lineTo: record('lineTo'), arc: record('arc'),
+        bezierCurveTo: record('bezierCurveTo'), save: record('save'), restore: record('restore'), rect: record('rect'),
+        clip: record('clip'),
         fill: record('fill'), stroke: record('stroke'), fillRect: record('fillRect'),
       };
       Object.defineProperty(this.ctx2d, 'fillStyle', {
@@ -742,6 +756,10 @@ const touchButtons = ['jump', 'mine', 'place', 'fly'].map(action => {
 });
 
 const storage = new Map();
+// Every run of the live-game battery must build the same world: the game picks a random seed when
+// there is no save, which used to make aim, digging and terrain tests flake once in a while.
+const TEST_SEED = 20250816;
+storage.set('pixeled-voxel-v2', JSON.stringify({ seed: TEST_SEED, edits: [] }));
 const documentListeners = new Map();
 function onDocument(type, event = {}) {
   const handlers = documentListeners.get(type) ?? [];
@@ -1046,6 +1064,24 @@ const stepAimed = (frames, yaw, pitch) => {
   live.player.pitch = pitch;
 };
 
+/**
+ * Turn to face a cell and step frames until the crosshair is on it. Aiming by hand is fragile — the
+ * player settles, the eye height shifts and a one-pixel miss becomes a flaky test.
+ */
+const aimAt = (x, y, z, frames = 90) => {
+  for (let frame = 0; frame < frames; frame++) {
+    const dx = x + 0.5 - live.player.x;
+    const dz = z + 0.5 - live.player.z;
+    const dy = y + 0.5 - live.player.eyeY;
+    const yaw = Math.atan2(-dx, -dz);
+    const pitch = Math.atan2(dy, Math.hypot(dx, dz));
+    stepAimed(1, yaw, pitch);
+    const hit = live.target();
+    if (hit && hit.x === x && hit.y === y && hit.z === z) return true;
+  }
+  return false;
+};
+
 const standOnPad = (cellX, cellZ, lift = 3) => {
   live.player.flying = true;
   live.player.x = cellX + 0.5;
@@ -1066,9 +1102,15 @@ assert.ok(stoneTarget, 'there is stone under the crosshair');
 live.mine();
 assert.notEqual(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'one tap does not break stone');
 live.input.mining = true;
-stepAimed(90, 0, -1.5);
+// Step until it breaks rather than assuming an exact swing length: what matters is that holding the
+// button finishes the block that a single tap could not.
+let digFrames = 0;
+for (; digFrames < 400 && live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z) !== AIR; digFrames++) {
+  stepAimed(1, 0, -1.5);
+}
 live.input.mining = false;
-assert.equal(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'holding the button does');
+assert.equal(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, `holding the button does (${digFrames} frames)`);
+assert.ok(digFrames > 5, 'and it is a real dig, not an instant break');
 assert.ok(live.particles.spawned > 0, 'breaking a block throws particles');
 assert.ok(live.tally.broken >= 1, 'and the tally counts it');
 assert.ok(live.world.edits.size >= 1, 'the block change is recorded for saving');
@@ -1092,8 +1134,8 @@ const waterSpot = live.world.spawnPoint();
 // Find a *deep* pool, not just a cell with water on top: the player has to fit inside water whose
 // surface is above their eyes.
 let waterColumn = null;
-for (let z = 1; z < WORLD_Z - 1; z += 2) {
-  for (let x = 1; x < WORLD_X - 1; x += 2) {
+for (let z = 1; z < WORLD_Z - 1; z++) {
+  for (let x = 1; x < WORLD_X - 1; x++) {
     if (live.world.get(x, SEA_LEVEL, z) !== WATER) continue;
     let depth = 0;
     while (live.world.isLiquid(x, SEA_LEVEL - depth - 1, z)) depth++;
@@ -1237,11 +1279,13 @@ standOnPad(PAD.x + 3, PAD.z + 3);
 stepAimed(1, 0, -1.5);
 assert.equal(live.target()?.y, padHeight, 'the crosshair is aimed straight at the diamond');
 live.input.mining = true;
-stepAimed(180, 0, -1.5);
+for (let frame = 0; frame < 400 && live.world.get(PAD.x + 3, padHeight, PAD.z + 3) !== AIR; frame++) {
+  stepAimed(1, 0, -1.5);
+}
 live.input.mining = false;
 assert.equal(live.world.get(PAD.x + 3, padHeight, PAD.z + 3), AIR, 'the diamond block breaks after a long dig');
 assert.ok(live.milestones.has('diamond'), 'finding diamond is a milestone');
-assert.ok(elements.get('toast').textContent.includes('Diamond'), 'and the toast says so');
+assert.match(elements.get('toast').textContent, /diamond/i, 'and the toast says so');
 live.tally.broken = live.tally.broken;   // unchanged: the tally belongs to the real session
 
 // --- the block palette: pick a block, and it fills the selected hotbar slot
@@ -1314,9 +1358,12 @@ live.player.velocityY = 0;
 live.milestones.delete('lava');
 live.flash = 0;
 live.damage = 0;
-step(30);
+// Fall in first, then hold: the pool is below the ledge, and how long the drop takes depends on
+// where the terrain happens to stop.
+for (let frame = 0; frame < 120 && !live.player.inLava; frame++) step(1);
 assert.equal(live.player.inLava, true, 'standing in lava is detected');
-assert.ok(live.heat > 0.1, 'and the screen washes orange');
+step(30);
+assert.ok(live.heat > 0.1, `and the screen washes orange (heat ${live.heat.toFixed(2)})`);
 let burned = false;
 for (let frame = 0; frame < 120 && !burned; frame++) {
   step(1);
@@ -1499,6 +1546,17 @@ assert.equal(doorBox(doorWorld), true, 'a shut door stops you');
 assert.equal(doorWorld.toggleDoor(70, 40, 70), true, 'opening it returns the new state');
 assert.equal(doorWorld.isDoorOpen(70, 40, 70), true, 'and it reports open');
 assert.equal(doorBox(doorWorld), false, 'an open door lets you through');
+assert.equal(shapeBoxes(constants.blockById(constants.DOOR), 1)[0].min[0], 0,
+  'an open door hangs flat against the frame');
+assert.equal(shapeBoxes(constants.blockById(constants.DOOR), 3)[0].max[0], 1,
+  'and swings to the other side when the metadata says so');
+const hingedDoor = new VoxelWorld(11);
+hingedDoor.set(70, 40, 70, constants.DOOR);
+hingedDoor.toggleDoor(70, 40, 70);
+assert.equal(hingedDoor.overlapsSolid(70.2, 40.1, 70.1, 70.8, 41.9, 70.9), false,
+  'walking the middle of an open doorway is clear');
+assert.equal(hingedDoor.overlapsSolid(70, 40.1, 70.1, 70.05, 41.9, 70.9), true,
+  'but the frame itself is still there');
 assert.equal(doorWorld.toggleDoor(70, 40, 70), false, 'toggling again shuts it');
 assert.equal(doorBox(doorWorld), true, 'and it is solid again');
 
@@ -1586,7 +1644,8 @@ assert.equal(countOf(live.inventory, constants.PLANKS), 4, 'crafting planks puts
 assert.equal(countOf(live.inventory, constants.LOG), logsBefore - 1, 'and spends the log');
 assert.equal(live.toggleCraft(false), false, 'C closes the panel');
 assert.equal(live.input.enabled, true, 'and gives the controls back');
-// A chest at eye height one block east of the player, who stands on the pad looking east.
+// Level the pad again first: the digging tests above left holes that the player would fall into.
+buildPad();
 const chestCell = { x: PAD.x + 1, y: padHeight + 2, z: PAD.z };
 live.world.placeBlock(chestCell.x, chestCell.y, chestCell.z, constants.CHEST);
 live.player.flying = false;
@@ -1594,10 +1653,7 @@ live.player.x = PAD.x + 0.5;
 live.player.z = PAD.z + 0.5;
 live.player.y = padHeight + 1;
 live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
-live.player.yaw = -Math.PI / 2;              // face east, toward the chest
-live.player.pitch = 0;
-stepAimed(2, -Math.PI / 2, 0);
-assert.equal(live.target() && live.target().x, chestCell.x, 'the crosshair finds the chest');
+assert.equal(aimAt(chestCell.x, chestCell.y, chestCell.z), true, 'the crosshair finds the chest');
 assert.equal(live.interact(), 'chest', 'E opens a chest you are looking at');
 assert.ok(live.openChest, 'and the game remembers which chest it is');
 assert.equal(live.storeHeld(), true, 'the held block goes in');
@@ -1622,8 +1678,10 @@ assert.equal(live.sleeping, 0, 'the fade finishes on its own');
 assert.ok(!isNight(live.day.clock), `and wakes you up in the morning (clock ${live.day.clock.toFixed(2)})`);
 live.day.clock = 0.4;
 live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.BED);
+assert.equal(aimAt(chestCell.x, chestCell.y, chestCell.z), true, 'aim at the bed again');
 assert.equal(live.interact(), null, 'a daytime nap is refused');
 live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.STONE);
+assert.equal(aimAt(chestCell.x, chestCell.y, chestCell.z), true, 'aim at a plain stone block');
 assert.equal(live.interact(), null, 'and aiming at a plain block does nothing');
 
 // --- hotbar icons are cubes, drawn on canvas, not colour chips
@@ -1636,6 +1694,557 @@ const iconCalls = firstSlot.children.find(child => child.className === 'slot-cub
 assert.equal(iconCalls.filter(call => call.name === 'fill').length, 3, 'a cube is three filled faces');
 assert.equal(iconCalls.filter(call => call.name === 'closePath').length, 3, 'each face is a closed path');
 assert.equal(new Set(iconCalls.filter(call => call.name === 'fillStyle').map(call => call.args[0])).size, 3, 'and the three faces are shaded differently');
+
+// =============================================================== v3.5: hearts, sky and weather
+
+// --- the health model on its own
+const { Health, fallDamage, DEATH_MESSAGES, MAX_HEALTH, HEARTS } = await import('../web/health.js');
+assert.equal(MAX_HEALTH, 20, 'ten hearts, two points each');
+assert.equal(HEARTS, 10, 'and ten hearts on the bar');
+const heart = new Health();
+assert.equal(heart.points, MAX_HEALTH, 'you start at full health');
+assert.equal(heart.ratio, 1, 'and the ratio agrees');
+assert.equal(heart.hurt(4, 'fall'), 4, 'a fall takes four points');
+assert.equal(heart.points, 16, 'eight hearts left');
+assert.equal(heart.hurt(4, 'fall'), 0, 'but the mercy window swallows the next hit');
+assert.equal(heart.points, 16, 'so nothing is lost');
+heart.invulnerable = 0;
+assert.equal(heart.hurt(4, 'fall'), 4, 'once the window closes, damage lands again');
+assert.equal(fallDamage(2), 0, 'a two-block drop is free');
+assert.equal(fallDamage(3), 0, 'so is three');
+assert.equal(fallDamage(7), 4, 'seven blocks costs four points');
+assert.equal(fallDamage(NaN), 0, 'and nonsense costs nothing');
+heart.points = 8;
+heart.invulnerable = 0;
+heart.sinceDamage = 0;
+assert.equal(heart.update(6), 0, 'six seconds without a scratch is not long enough to heal');
+assert.equal(heart.update(1), 0, 'seven seconds arms the healing, but nothing comes back yet');
+assert.equal(heart.points, 8, 'so you are still on four hearts');
+assert.equal(heart.update(3), 2, 'a couple of seconds later a heart comes back');
+assert.equal(heart.points, 10, 'which is two points');
+const healed = heart.update(30);
+assert.equal(heart.points, MAX_HEALTH, 'and the rest heals up to the cap');
+assert.ok(healed > 0, 'the update reports what it healed');
+heart.points = 1;
+heart.invulnerable = 0;
+assert.equal(heart.hurt(6, 'lava'), 1, 'six points of damage on your last point takes one');
+assert.equal(heart.isDead, true, 'and that is the end of you');
+assert.equal(heart.deaths, 1, 'the number of deaths is counted');
+assert.equal(heart.lastCause, 'lava', 'and the cause is remembered for the death screen');
+assert.equal(heart.respawn(), true, 'respawning revives you');
+assert.equal(heart.points, MAX_HEALTH, 'at full health');
+assert.equal(heart.isDead, false, 'and alive again');
+assert.ok(heart.invulnerable > 0, 'with a moment of mercy to get your bearings');
+assert.match(DEATH_MESSAGES.lava, /lava/i, 'the death messages name the cause');
+assert.match(DEATH_MESSAGES.drown, /air/i, 'including drowning');
+
+// --- falling hurts, and the drop is measured by the player
+const fallWorld = new VoxelWorld(21);
+const fallHeight = fallWorld.surfaceHeight(70, 70);
+for (let dz = -3; dz <= 3; dz++) {
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let y = fallHeight + 1; y < fallHeight + 24; y++) fallWorld.set(70 + dx, y, 70 + dz, constants.AIR);
+    fallWorld.set(70 + dx, fallHeight, 70 + dz, constants.STONE);
+  }
+}
+const cliffJumper = new Player(fallWorld);
+cliffJumper.x = 70.5; cliffJumper.z = 70.5;
+cliffJumper.y = fallHeight + 13;                       // thirteen blocks up
+cliffJumper.flying = false;
+cliffJumper.velocityY = 0;
+let hardLanding = 0;
+for (let frame = 0; frame < 300 && !cliffJumper.onGround; frame++) {
+  cliffJumper.update(1 / 60, {}, fallWorld);
+  if (cliffJumper.landedHard) hardLanding = cliffJumper.landedHard;
+}
+assert.ok(Math.abs(hardLanding - 12) < 1.5, `the drop is measured as about twelve blocks (${hardLanding.toFixed(2)})`);
+assert.equal(fallDamage(hardLanding), 9, 'and costs nine points of health');
+assert.equal(cliffJumper.fallDistance, 0, 'the counter resets when you land');
+assert.equal(cliffJumper.landedHard > 0, true, 'and the landing is reported once, for the game to read');
+
+// --- the sky grew a moon, an aurora and some planets
+const { shapeHeight } = await import('../web/renderer.js');
+const middaySky = skyPalette(0.5);
+const midnightSky = skyPalette(0.0);
+assert.equal(middaySky.night < 0.05, true, 'midday is not night');
+assert.equal(midnightSky.night > 0.9, true, 'and midnight is');
+assert.ok(Array.isArray(middaySky.moonDirection) && middaySky.moonDirection.length === 3, 'the moon has a direction');
+const dot = middaySky.sunDirection[0] * middaySky.moonDirection[0] + middaySky.sunDirection[1] * middaySky.moonDirection[1] + middaySky.sunDirection[2] * middaySky.moonDirection[2];
+assert.ok(dot < -0.9, `the moon sits opposite the sun (${dot.toFixed(2)})`);
+assert.equal(middaySky.aurora.toFixed(2), '0.00', 'there is no aurora at midday');
+assert.ok(midnightSky.aurora > 0.9, `and a strong one at midnight (${midnightSky.aurora.toFixed(2)})`);
+assert.match(source('../web/renderer.js'), /uMoonDirection|uAurora/, 'the sky shader is built from the same data');
+
+// --- the outline of a slab is half height, not a whole block
+const shapeWorld2 = new VoxelWorld(22);      // (skyPalette came in with the modules at the top)
+assert.equal(shapeHeight(null, { x: 0, y: 0, z: 0 }), 1, 'no world means a plain cube outline');
+shapeWorld2.set(70, 40, 70, constants.SLAB);
+shapeWorld2.set(71, 40, 70, constants.STAIRS);
+shapeWorld2.set(72, 40, 70, constants.STONE);
+assert.equal(shapeHeight(shapeWorld2, { x: 70, y: 40, z: 70 }), 0.5, 'a slab is outlined at half height');
+assert.equal(shapeHeight(shapeWorld2, { x: 71, y: 40, z: 70 }), 1, 'stairs are a whole block');
+assert.equal(shapeHeight(shapeWorld2, { x: 72, y: 40, z: 70 }), 1, 'and so is stone');
+assert.equal(shapeHeight(shapeWorld2, { x: 73, y: 40, z: 70 }), 1, 'and an empty cell falls back to a cube');
+
+// --- the held block keeps its shape in your hand
+const { buildHeldModel, offsetHeldModel } = await import('../web/renderer.js');
+const frame = Array.from(buildHeldModel(new Float32Array(16), 0, 0));
+const corner = (matrix, q) => [
+  matrix[0] * q[0] + matrix[4] * q[1] + matrix[8] * q[2] + matrix[12],
+  matrix[1] * q[0] + matrix[5] * q[1] + matrix[9] * q[2] + matrix[13],
+  matrix[2] * q[0] + matrix[6] * q[1] + matrix[10] * q[2] + matrix[14],
+];
+const low = [-0.5, -0.5, -0.5], high = [0.5, 0.5, 0.5];
+const cubeBox = (minX, minY, minZ, maxX, maxY, maxZ) => ({ min: [minX, minY, minZ], max: [maxX, maxY, maxZ] });
+const plainHeld = Array.from(offsetHeldModel(new Float32Array(16), frame, cubeBox(0, 0, 0, 1, 1, 1)));
+assert.deepEqual(corner(plainHeld, low).map(v => +v.toFixed(6)), corner(frame, low).map(v => +v.toFixed(6)),
+  'a whole block fills the hand cube exactly as before');
+const slabHeld = Array.from(offsetHeldModel(new Float32Array(16), frame, cubeBox(0, 0, 0, 1, 0.5, 1)));
+assert.deepEqual(corner(slabHeld, low).map(v => +v.toFixed(6)), corner(frame, low).map(v => +v.toFixed(6)),
+  'a held slab sits on the same floor as a cube');
+const cubeTop = corner(frame, high), cubeBottom = corner(frame, low);
+// A slab is only short on Y: the height drops by half, the footprint does not move. Compare the
+// three edge vectors of the box, since the hand's frame is rotated and world axes are no guide.
+const edge = (matrix, axis) => [matrix[axis * 4], matrix[axis * 4 + 1], matrix[axis * 4 + 2]];
+const closeEdge = (a, b, label) => a.forEach((value, i) => assert.ok(Math.abs(value - b[i]) < 1e-6, label + ` (part ${i})`));
+closeEdge(edge(slabHeld, 0), edge(frame, 0), 'a held slab keeps the cube width');
+closeEdge(edge(slabHeld, 2), edge(frame, 2), 'and the cube depth');
+closeEdge(edge(slabHeld, 1), edge(frame, 1).map(v => v / 2), 'and half the cube height');
+// A held chest is two boxes, drawn as two squeezed cubes.
+const chestParts = shapeBoxes(constants.blockById(44));
+assert.equal(chestParts.length, 2, 'a chest in the hand is drawn as a body and a lid');
+assert.equal(live.world.metaAt(-1, 0, 0), 0, 'meta outside the world reads as none');
+
+// --- the save file carries the whole world, not just the blocks
+const { BrowserSave } = await import('../web/storage.js');
+const goodSave = {
+  seed: 4242,
+  edits: { '1,2,3': 5 },                       // saved files are plain objects, as JSON requires
+  metaEdits: { '1,2,3': 3 },
+  chests: { '4,5,6': { 12: 2, 30: 1 } },
+  inventory: { 5: 9, 42: 1, 7: 0 },
+  player: { x: 1, y: 2, z: 3, yaw: 0, pitch: 0 },
+  selected: 1,
+  clock: 0.5,
+};
+storage.set('pixeled-voxel-v2', JSON.stringify(goodSave));
+const richLoaded = new BrowserSave().load();
+assert.equal(richLoaded.metaEdits.get('1,2,3'), 3, 'a door that was left open stays open');
+assert.deepEqual(richLoaded.chests['4,5,6'], { 12: 2, 30: 1 }, 'and the chest keeps what was in it');
+assert.deepEqual(richLoaded.inventory, { 5: 9, 42: 1, 7: 0 }, 'and so does the backpack');
+const oldSave = { seed: 7, edits: {}, player: null, selected: 0, clock: 0.4 };
+storage.set('pixeled-voxel-v2', JSON.stringify(oldSave));
+const upgraded = new BrowserSave().load();
+assert.deepEqual(Object.fromEntries(upgraded.metaEdits), {}, 'an old save has no metadata');
+assert.equal(upgraded.inventory, null, 'and no backpack, so it loads as empty');
+assert.ok(new BrowserSave().write({
+  seed: 9, edits: new Map(), player: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 }, selected: 0, clock: 0.4,
+  metaEdits: new Map([['2,2,2', 1]]), chests: { '2,3,2': { 1: 3 } }, inventory: new Map([[5, 2]]),
+}), 'and a write with the new fields succeeds');
+const savedAgain = new BrowserSave().load();
+assert.equal(savedAgain.metaEdits.get('2,2,2'), 1, 'metadata survives the round trip');
+assert.deepEqual(savedAgain.chests['2,3,2'], { 1: 3 }, 'chests do too');
+assert.deepEqual(savedAgain.inventory, { 5: 2 }, 'and the backpack');
+assert.equal(new BrowserSave().get('pixeled-recent-v1'), null, 'the side keys start empty');
+const saves = new BrowserSave();
+assert.equal(saves.set('pixeled-recent-v1', [{ seed: 1 }]), true, 'a side key can be written');
+assert.deepEqual(JSON.parse(saves.get('pixeled-recent-v1')), [{ seed: 1 }], 'and read back');
+assert.equal(saves.set('pixeled-recent-v1', 'plain text'), true, 'strings are stored as they are');
+assert.equal(saves.get('pixeled-recent-v1'), 'plain text', 'and come back untouched');
+saves.remove('pixeled-recent-v1');
+assert.equal(saves.get('pixeled-recent-v1'), null, 'and a side key can be removed');
+assert.equal(typeof live.world.metaAt(64, 30, 64), 'number', 'and inside it as a number');
+
+const bodyHeld = Array.from(offsetHeldModel(new Float32Array(16), frame, chestParts[0]));
+assert.ok(corner(bodyHeld, high)[1] < corner(frame, high)[1] - 1e-6, 'and its body is shorter than a cube');
+const fenceHeld = Array.from(offsetHeldModel(new Float32Array(16), frame, shapeBoxes(constants.blockById(41))[0]));
+const lengthOf = vector => Math.hypot(...vector);
+assert.ok(lengthOf(edge(fenceHeld, 0)) < 0.1 && lengthOf(edge(fenceHeld, 2)) < 0.1,
+  'a held fence post is a stick, not a block');
+assert.ok(lengthOf(edge(fenceHeld, 1)) > 0.3, 'but still a whole block tall');
+
+// --- rain splashes (Particles is already in scope from the modules above)
+const splashParticles = new Particles(64);
+const splashCount = splashParticles.rainSplash(10.5, 20, 10.5, 1);
+assert.ok(splashCount >= 3, `a raindrop kicks up a few droplets (${splashCount})`);
+assert.equal(splashParticles.active, splashCount, 'and they are live');
+const firstSplash = splashParticles.items.find(item => item.life > 0);
+assert.equal(firstSplash.y, 20.06, 'starting just above the ground');
+assert.ok(firstSplash.vy > 0, 'moving upward first');
+assert.ok(firstSplash.vz !== 0 || firstSplash.vx !== 0, 'and outward from the impact');
+assert.ok(splashParticles.rainSplash(10.5, 20, 10.5, 0.2) <= splashCount + 3, 'a light drizzle makes fewer splashes');
+
+// --- the live game: hearts drop, the death screen shows, respawning brings you back
+if (live.paused) live.resume();
+live.health.points = MAX_HEALTH;
+live.health.invulnerable = 0;
+live.dead = false;
+live.ui.setDeath(false);
+standOnPad(PAD.x + 5, PAD.z + 5);
+live.player.flying = false;
+live.player.velocityY = 0;
+live.hurt(6, 'fall');
+assert.equal(live.health.points, 14, 'a hit takes health off');
+assert.ok(live.flash > 0, 'and the screen flashes');
+assert.equal(live.hurt(6, 'fall'), 0, 'a second hit in the same moment is swallowed');
+live.health.invulnerable = 0;
+live.hurt(20, 'lava');
+assert.equal(live.dead, true, 'running out of hearts kills you');
+assert.equal(live.input.enabled, false, 'and parks the controls');
+assert.equal(elements.get('death').hidden, false, 'the death screen comes up');
+assert.equal(elements.get('death-cause').textContent, DEATH_MESSAGES.lava, 'with the cause written on it');
+assert.equal(live.health.deaths, 1, 'the death is counted');
+assert.equal(live.respawn(), true, 'the respawn button works');
+assert.equal(live.dead, false, 'and you are alive again');
+assert.equal(live.health.points, MAX_HEALTH, 'at full health');
+assert.equal(elements.get('death').hidden, true, 'with the death screen gone');
+assert.equal(live.input.enabled, true, 'and the controls back');
+const respawnPoint = live.world.spawnPoint();
+assert.ok(Math.abs(live.player.x - respawnPoint.x) < 0.01 && Math.abs(live.player.z - respawnPoint.z) < 0.01, 'standing at the spawn point');
+assert.equal(live.respawn(), false, 'respawning twice does nothing the second time');
+
+// --- and the hearts are drawn, ten of them, darkened as they empty
+const heartCanvas = elements.get('hearts');
+heartCanvas.width = 200;
+const heartContext = heartCanvas.getContext('2d');
+/** Draw the bar and hand back just the calls that draw made, not every call since the game booted. */
+const drawAndTrace = (points) => {
+  live.health.points = points;
+  const from = heartContext.calls.length;       // window: only the calls this draw makes
+  const count = live.ui.drawHealth(heartCanvas, live.health);
+  return { count, calls: heartContext.calls.slice(from) };
+};
+const fullBar = drawAndTrace(20);
+// Each heart is drawn three times: the dark socket, the clipped colour, then the outline.
+assert.equal(fullBar.calls.filter(call => call.name === 'bezierCurveTo').length, 60, 'each heart is two curves, three passes');
+assert.equal(fullBar.calls.filter(call => call.name === 'stroke').length, 10, 'and gets an outline');
+assert.equal(fullBar.calls.filter(call => call.name === 'clip').length, 10, 'a full heart clips its fill into the shape');
+assert.equal(fullBar.calls.filter(call => call.name === 'fill').length, 20, 'and paints a socket plus a coloured face');
+const halfBar = drawAndTrace(10);
+assert.equal(halfBar.calls.filter(call => call.name === 'clip').length, 5, 'half your hearts clips five of them');
+const emptyBar = drawAndTrace(0);
+assert.ok(emptyBar.calls.length > 0, 'an empty bar still draws its sockets');
+assert.equal(emptyBar.calls.filter(call => call.name === 'clip').length, 0, 'with nothing to clip and no colour');
+assert.equal(emptyBar.calls.filter(call => typeof call.args?.[0] === 'string' && /^#/.test(call.args[0])).length, 0, 'so no heart is painted red');
+assert.ok(fullBar.calls.filter(call => typeof call.args?.[0] === 'string' && /^#/.test(call.args[0])).length > 0, 'while a full bar is painted in colour');
+
+// --- low health pulses the screen
+live.health.points = 4;
+live.health.invulnerable = 0;
+live.flash = 0;
+step(1);
+assert.ok(live.flash > 0, 'being nearly dead makes the screen pulse');
+assert.ok(live.pulse >= 0 && live.pulse <= 1, 'and the pulse stays in range');
+live.health.points = MAX_HEALTH;
+step(1);
+assert.ok(live.flash < 0.2, 'but a healthy player has a clear screen');
+
+// --- weather now splashes on the ground where you can see it
+const splashBefore = live.particles.active;
+live.weather.intensity = 0.8;
+live.weather.storm = true;
+live.settings.values.particles = true;
+live.particles.clear();
+let splashed = 0;
+for (let frame = 0; frame < 40 && splashed === 0; frame++) {
+  live.splashTimer = 0;
+  step(1);
+  splashed = live.particles.active;
+}
+assert.ok(splashed > 0, `rain kicks droplets up off the ground (${splashed} particles)`);
+live.weather.intensity = 0;
+live.particles.clear();
+void splashBefore;
+
+// =============================================================== v3.6: modes, dailies, seeded worlds
+
+// --- the mode shelf
+const { MODES, DEFAULT_MODE, modeById, modeChip, randomModeId, formatTime } = await import('../web/modes.js');
+assert.equal(MODES.length, 4, 'four modes on the shelf');
+assert.equal(modeById(DEFAULT_MODE).id, 'survival', 'survival is the default');
+assert.equal(modeById('nonsense').id, 'survival', 'an unknown mode falls back to survival');
+for (const mode of MODES) {
+  assert.ok(mode.name && mode.hook && mode.badge && mode.blurb, `${mode.id} is described like a shelf card`);
+  assert.match(mode.colour, /^#[0-9a-f]{6}$/i, `${mode.id} has a colour`);
+  assert.equal(typeof mode.rules.health, 'boolean', `${mode.id} says whether health applies`);
+  assert.equal(typeof mode.rules.infiniteBlocks, 'boolean', `${mode.id} says whether blocks are free`);
+}
+assert.equal(modeById('creative').rules.infiniteBlocks, true, 'creative gives unlimited blocks');
+assert.equal(modeById('creative').rules.instantMine, true, 'and instant mining');
+assert.equal(modeById('sandbox').rules.flat, true, 'the sandbox is a flat world');
+assert.equal(modeById('speedrun').rules.timer, true, 'the speedrun is timed');
+assert.equal(modeChip(modeById('speedrun')).name, 'Speedrun', 'the HUD chip carries the name');
+const randomModes = new Set();
+for (let i = 0; i < 200; i++) randomModes.add(randomModeId(() => i / 200));
+assert.equal(randomModes.size, 4, 'every mode can come up on "surprise me"');
+assert.equal(formatTime(0), '0:00.0', 'the timer formats zero');
+assert.equal(formatTime(83.45), '1:23.5', 'and minutes and seconds, to a tenth');
+assert.equal(formatTime(60), '1:00.0', 'a whole minute pads its seconds');
+assert.equal(formatTime(-3), '0:00.0', 'and a negative clock reads as zero');
+
+// --- a flat sandbox world
+const flatWorld = new VoxelWorld(4242, { flat: true });
+assert.equal(flatWorld.flat, true, 'the world knows it is flat');
+assert.equal(flatWorld.surfaceHeight(4, 4), flatWorld.surfaceHeight(120, 120), 'every column is the same height');
+const flatTop = flatWorld.surfaceHeight(64, 64);
+assert.equal(constants.blockById(flatWorld.get(64, flatTop, 64)).name, 'Grass', 'the top layer is grass');
+assert.equal(constants.blockById(flatWorld.get(64, flatTop - 1, 64)).name, 'Dirt', 'under it is dirt');
+assert.equal(constants.blockById(flatWorld.get(64, flatTop - 4, 64)).name, 'Stone', 'and then stone');
+assert.equal(constants.blockById(flatWorld.get(64, 0, 64)).name, 'Obsidian', 'the floor is unbreakable obsidian');
+assert.equal(flatWorld.biomeNameAt(10, 10), 'plains', 'a sandbox world is all plains');
+assert.equal(flatWorld.ready, true, 'and it is ready for edits like any other world');
+assert.ok(flatWorld.lightAt(64, flatTop + 1, 64) === 15, 'daylight reaches the surface');
+assert.ok(flatWorld.lightAt(64, flatTop - 6, 64) < 8, 'and the ground below is dark');
+let flatTrunks = 0, flatPlants = 0;
+for (let z = 0; z < 128; z += 1) {
+  for (let x = 0; x < 128; x += 1) {
+    const id = flatWorld.get(x, flatTop + 1, z);
+    if ([constants.LOG, constants.BIRCH_LOG, constants.SPRUCE_LOG].includes(id)) flatTrunks++;
+    else if (id === constants.FLOWER || id === constants.TALL_GRASS) flatPlants++;
+  }
+}
+assert.ok(flatTrunks > 0, `a flat world still has a few trees (${flatTrunks} trunk cells)`);
+assert.ok(flatPlants > 20, `and a scattering of grass and flowers (${flatPlants})`);
+const flatMesh = buildChunkMesh(flatWorld, 4, 4);
+assert.ok(flatMesh.opaque.quadCount > 40, 'and it meshes like any other chunk');
+// water never pools on a flat world: sea level is far below the plateau
+assert.equal(flatWorld.get(64, SEA_LEVEL, 64) === WATER, false, 'no sea on the sandbox plateau');
+
+// --- the daily challenge
+const { todayKey, dailySeed, dailyGoals, GOALS, GOALS_PER_DAY, goalProgress, goalComplete, loadDaily, saveDaily, completeGoal, challengeSummary, previousKey, hashString } = await import('../web/challenges.js');
+assert.match(todayKey(new Date(2026, 9, 16)), /^2026-10-16$/, 'the day key is YYYY-MM-DD');
+assert.equal(previousKey('2026-10-16'), '2026-10-15', 'and the day before it can be worked out');
+assert.equal(previousKey('2026-03-01'), '2026-02-28', 'across a month boundary too');
+assert.equal(dailySeed('2026-10-16'), dailySeed('2026-10-16'), 'the same day gives the same seed');
+assert.notEqual(dailySeed('2026-10-16'), dailySeed('2026-10-17'), 'and a new day gives a new one');
+assert.ok(dailySeed('2026-10-16') >= 1000 && dailySeed('2026-10-16') <= 901000, 'the seed is in a sane range');
+const goalsA = dailyGoals('2026-10-16');
+assert.equal(goalsA.length, GOALS_PER_DAY, 'three goals a day');
+assert.equal(new Set(goalsA.map(goal => goal.id)).size, GOALS_PER_DAY, 'and they are different goals');
+assert.deepEqual(dailyGoals('2026-10-16').map(goal => goal.id), goalsA.map(goal => goal.id), 'the same day gives the same goals');
+assert.ok(goalsA.every(goal => GOALS.includes(goal)), 'every goal comes from the pool');
+assert.ok(GOALS.every(goal => goal.label && goal.value > 0 && typeof goal.of === 'function'), 'every goal knows its label, target and progress');
+
+const stats = { broken: 15, placed: 0, distance: 40, torches: 0, logs: 0, crafted: 0, diamonds: 0, lowestY: 40, dawns: 0, swum: 0 };
+const mineGoal = GOALS.find(goal => goal.id === 'mine-30');
+assert.equal(goalProgress(mineGoal, stats), 0.5, 'fifteen of thirty is half done');
+assert.equal(goalComplete(mineGoal, stats), false, 'and not finished');
+stats.broken = 30;
+assert.equal(goalComplete(mineGoal, stats), true, 'thirty of thirty is finished');
+assert.equal(goalProgress(mineGoal, stats), 1, 'and clamps at one');
+assert.equal(goalProgress(mineGoal, { ...stats, broken: 900 }), 1, 'even when you overshoot');
+const depthGoal = GOALS.find(goal => goal.id === 'depth-14');
+assert.equal(goalComplete(depthGoal, { ...stats, lowestY: 20 }), false, 'staying above y=14 does not count');
+assert.equal(goalComplete(depthGoal, { ...stats, lowestY: 14 }), true, 'reaching y=14 does');
+assert.equal(goalComplete(depthGoal, { ...stats, lowestY: null }), false, 'and never digging down counts as nothing');
+
+const dailyStore = new Map();
+const fakeStorage = { get: key => (dailyStore.has(key) ? dailyStore.get(key) : null), set: (key, value) => dailyStore.set(key, value) };
+let dayState = loadDaily(fakeStorage, '2026-10-16');
+assert.deepEqual(dayState.done, [], 'a fresh day starts with nothing done');
+const firstTick = completeGoal(fakeStorage, 'mine-30', '2026-10-16');
+assert.equal(firstTick.justFinished, true, 'completing a goal reports the news');
+assert.equal(firstTick.state.done.length, 1, 'and records it');
+assert.equal(completeGoal(fakeStorage, 'mine-30', '2026-10-16').justFinished, false, 'doing it twice only counts once');
+const secondTick = completeGoal(fakeStorage, 'place-20', '2026-10-16');
+assert.equal(secondTick.state.done.length, 2, 'a second goal is recorded');
+const thirdTick = completeGoal(fakeStorage, 'walk-150', '2026-10-16');
+assert.equal(thirdTick.state.done.length, 3, 'and a third');
+assert.equal(thirdTick.streak, 1, 'finishing all three starts a streak');
+assert.equal(loadDaily(fakeStorage, '2026-10-16').streak, 1, 'which is remembered');
+// the next day: yesterday's goals are gone, and finishing today extends the streak
+const nextDay = loadDaily(fakeStorage, '2026-10-17');
+assert.deepEqual(nextDay.done, [], 'a new day clears the ticks');
+completeGoal(fakeStorage, 'mine-30', '2026-10-17');
+completeGoal(fakeStorage, 'place-20', '2026-10-17');
+const extended = completeGoal(fakeStorage, 'walk-150', '2026-10-17');
+assert.equal(extended.streak, 2, 'two days in a row is a two-day streak');
+assert.equal(extended.state.best, 2, 'and the best is kept');
+const summary = challengeSummary([mineGoal], { ...stats, broken: 10, lowestY: 40 }, { day: '2026-10-16', done: [], streak: 0 });
+assert.equal(summary[0].progress > 0 && summary[0].progress < 1, true, 'the summary carries a progress bar value');
+assert.equal(summary[0].complete, false, 'and whether it is done');
+
+// --- the live game: modes change the rules, and the shelves are filled
+live.setMode('creative');
+assert.equal(live.creativeMode, true, 'creative mode gives infinite blocks');
+assert.equal(live.instantMine, true, 'and instant mining');
+assert.equal(live.invulnerable, true, 'and no damage at all');
+assert.equal(live.player.flying, true, 'with flight on from the start');
+assert.equal(live.hurt(20, 'fall'), 0, 'so a fall cannot hurt you');
+assert.equal(live.health.points, 20, 'and your hearts stay full');
+assert.equal(elements.get('hud-mode-chip').hidden, false, 'the HUD shows the mode you are playing');
+assert.match(elements.get('hud-mode-chip').textContent, /Creative/, 'by name');
+assert.equal(elements.get('run-timer').hidden, true, 'and the clock stays hidden outside a speedrun');
+
+// placing a block in creative does not spend anything
+buildPad();
+standOnPad(PAD.x + 2, PAD.z + 2);
+live.selectHotbar(2);
+const freeBlock = live.slotBlock();
+live.inventory.delete(freeBlock);
+assert.equal(live.build() || live.world.get(PAD.x + 2, padHeight + 1, PAD.z + 2) !== constants.AIR, true, 'creative building works');
+assert.equal(live.inventory.has(freeBlock), false, 'and costs nothing from the bag');
+
+live.setMode('survival');
+assert.equal(live.creativeMode, false, 'survival takes the free blocks away');
+assert.equal(live.invulnerable, false, 'and gives you your hearts back');
+live.setMode('speedrun');
+assert.equal(elements.get('run-timer').hidden, false, 'the speedrun shows the clock');
+assert.equal(live.runTime, 0, 'which starts at zero');
+assert.equal(live.running, true, 'and runs while you play');
+step(30);
+assert.ok(live.runTime > 0.3, `the clock counts up while playing (${live.runTime.toFixed(2)})`);
+live.runDone = 12.5;
+assert.equal(live.running, false, 'and stops once the run is finished');
+assert.equal(formatTime(live.runDone), '0:12.5', 'with the finishing time on the HUD');
+live.setMode('survival');
+
+// --- picking a mode card, and starting a world from a seed
+live.pickMode('sandbox');
+assert.equal(live.mode.id, 'sandbox', 'clicking a mode card switches the rules');
+assert.equal(live.world.flat, true, 'and the sandbox really is a flat world');
+assert.equal(live.recent.length >= 1, true, 'starting a world remembers it in the recent list');
+live.pickMode('survival');
+assert.equal(live.world.flat, false, 'going back to survival rebuilds a normal world');
+assert.ok(live.menu.recentRow.children.length >= 1, 'the world is on the recent shelf');
+assert.equal(live.recent[0].seed, live.world.seed, 'and the most recent entry is the world you are in');
+assert.equal(live.recent[0].mode, live.mode.id, 'with the mode it was played in');
+assert.equal(live.recent.filter(entry => entry.seed === live.world.seed).length, 1, 'the shelf never lists a seed twice');
+const surprise = live.surprise();
+assert.ok(surprise.seed >= 100000, 'surprise me picks a real seed');
+assert.equal(MODES.some(mode => mode.id === surprise.mode), true, `and a real mode (${surprise.mode})`);
+assert.equal(live.mode.id, surprise.mode, 'which is the mode the game is now playing');
+assert.equal(live.world.seed, surprise.seed, 'and starts you in it');
+
+live.startWorld(777, 'creative');
+assert.equal(live.world.seed, 777, 'a seed starts the exact world you asked for');
+assert.equal(live.mode.id, 'creative', 'in the mode you asked for');
+assert.equal(live.menu.modeRow.children.length, MODES.length, 'the shelf keeps its cards');
+assert.equal([...live.menu.modeRow.children].filter(card => card.classList.contains('active')).length, 1, 'with exactly one selected');
+
+// --- the daily panel
+const refreshed = live.refreshChallenges();
+assert.equal(refreshed.length, GOALS_PER_DAY, 'the daily panel lists today three goals');
+assert.equal(elements.get('challenge-list').children.length, GOALS_PER_DAY, 'as three rows');
+assert.equal(elements.get('challenge-seed').textContent, String(dailySeed(live.dayKey)), "the card shows today's seed");
+assert.match(elements.get('challenge-day').textContent, /DAILY/, 'and the day badge');
+assert.equal(elements.get('daily-goals').children.length, GOALS_PER_DAY, 'the start screen teases the same goals');
+assert.equal(live.toggleChallenges(true), true, 'J opens the daily panel');
+assert.equal(elements.get('challenges').hidden, false, 'and it is on screen');
+assert.equal(live.toggleChallenges(false), false, 'J closes it again');
+assert.equal(elements.get('challenges').hidden, true, 'and it is hidden');
+
+// --- a goal completes itself as you play, and the day is remembered
+live.dailyState.done = [];
+live.storage.set('pixeled-daily-v1', JSON.stringify({ ...live.dailyState, done: [] }));
+for (const goal of live.dailyGoals) live.challengeStats[goal.id] = 0;
+// The game's own tally feeds some of the goals, so it has to move too.
+live.tally.broken = 9999;
+live.tally.placed = 9999;
+live.tally.distance = 9999;
+live.challengeStats.broken = 9999;
+live.challengeStats.placed = 9999;
+live.challengeStats.distance = 9999;
+live.challengeStats.torches = 9999;
+live.challengeStats.logs = 9999;
+live.challengeStats.crafted = 9999;
+live.challengeStats.diamonds = 9999;
+live.challengeStats.lowestY = 4;
+live.challengeStats.dawns = 9999;
+live.challengeStats.swum = 9999;
+assert.equal(live.updateChallenges(1), true, 'a completed goal is noticed while playing');
+assert.equal(live.dailyState.done.length, GOALS_PER_DAY, 'all three land at once when the stats say so');
+assert.match(elements.get('toast').textContent, /Daily/, 'and the toast says which');
+assert.equal(live.challengeOpen, false, 'the panel stays closed unless asked for');
+
+// --- closing the tab and coming back: the world, your backpack and your chests all return
+const saveSeed = live.world.seed;
+const saveDoor = { x: PAD.x, y: padHeight + 1, z: PAD.z + 4 };
+live.world.set(saveDoor.x, saveDoor.y, saveDoor.z, constants.DOOR);
+live.world.setMeta(saveDoor.x, saveDoor.y, saveDoor.z, 3);
+const saveChest = { x: PAD.x + 2, y: padHeight + 1, z: PAD.z + 4 };
+live.world.set(saveChest.x, saveChest.y, saveChest.z, constants.CHEST);
+const savedChest = live.world.chestAt(saveChest.x, saveChest.y, saveChest.z, true);
+assert.ok(chest, 'a chest can be placed and filled');
+addTo(savedChest, constants.DIAMOND_BLOCK, 5);
+addTo(live.inventory, constants.STONE, 64);
+live.save();
+const written = JSON.parse(storage.get('pixeled-voxel-v2'));
+assert.equal(written.seed, saveSeed, 'the save names the world');
+assert.equal(written.metaEdits[`${saveDoor.x},${saveDoor.y},${saveDoor.z}`], 3, 'the open door is written down');
+assert.equal(written.chests[`${saveChest.x},${saveChest.y},${saveChest.z}`][String(constants.DIAMOND_BLOCK)], 5, 'the chest keeps its diamonds');
+assert.equal(written.inventory[String(constants.STONE)], 64, 'and the backpack keeps the stone');
+assert.equal(written.mode, live.mode.id, 'with the mode you were playing');
+live.saved = live.storage.load();
+live.createWorld(saveSeed, true);
+const reopened = live.world.chestAt(saveChest.x, saveChest.y, saveChest.z);
+assert.ok(reopened, 'reopening the save brings the chest back');
+assert.equal(countOf(reopened, constants.DIAMOND_BLOCK), 5, 'with its diamonds still inside');
+assert.equal(live.world.getMeta(saveDoor.x, saveDoor.y, saveDoor.z), 3, 'and the door is still open');
+assert.equal(countOf(live.inventory, constants.STONE), 64, 'and you still have your stone');
+assert.equal(live.world.get(saveDoor.x, saveDoor.y, saveDoor.z), constants.DOOR, 'and the blocks you placed are all there');
+// --- breaking a chest gives back what was inside it
+buildPad();
+const spillCell = { x: PAD.x - 1, y: padHeight + 2, z: PAD.z };
+live.player.flying = false;
+live.player.x = PAD.x + 0.5;
+live.player.z = PAD.z + 0.5;
+live.player.y = padHeight + 1;
+live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
+live.world.placeBlock(spillCell.x, spillCell.y, spillCell.z, constants.CHEST);
+const spillChest = live.world.chestAt(spillCell.x, spillCell.y, spillCell.z, true);
+addTo(spillChest, constants.GOLD_BLOCK, 3);
+const goldBefore = countOf(live.inventory, constants.GOLD_BLOCK);
+assert.equal(aimAt(spillCell.x, spillCell.y, spillCell.z), true, 'the crosshair finds the chest before it goes');
+live.input.mining = true;                  // hold the button, one frame at a time
+for (let frame = 0; frame < 400 && live.world.get(spillCell.x, spillCell.y, spillCell.z) !== AIR; frame++) {
+  stepAimed(1, live.player.yaw, live.player.pitch);
+}
+live.input.mining = false;
+assert.equal(live.world.get(spillCell.x, spillCell.y, spillCell.z), constants.AIR, 'a chest breaks like any other block');
+assert.equal(countOf(live.inventory, constants.GOLD_BLOCK), goldBefore + 3, 'and its stacks land in your backpack');
+assert.equal(live.world.chestAt(spillCell.x, spillCell.y, spillCell.z), null, 'the chest itself is gone');
+assert.match(elements.get('toast').textContent, /spilled/, 'and the toast says so');
+
+// --- a block placed against water or a plant takes its cell
+const splashCell = { x: PAD.x + 4, y: padHeight + 1, z: PAD.z };
+live.world.set(splashCell.x, splashCell.y, splashCell.z, constants.WATER);
+assert.equal(live.world.placeBlock(splashCell.x, splashCell.y, splashCell.z, constants.STONE, { replace: true }), true,
+  'placeBlock can replace water when it is told to');
+live.world.set(splashCell.x, splashCell.y, splashCell.z, constants.TALL_GRASS);
+assert.equal(constants.blockById(live.world.get(splashCell.x, splashCell.y, splashCell.z)).plant, true, 'tall grass is a plant');
+live.world.set(splashCell.x, splashCell.y, splashCell.z, AIR);
+
+// --- sleeping brings a clear morning
+live.setMode('survival', { silent: true });
+const midnight = 0.9;
+live.day.clock = midnight;
+live.weather.intensity = 0.8;
+live.weather.phase = 'storm';
+assert.equal(live.sleep(PAD.x, padHeight, PAD.z), true, 'you can sleep at night');
+live.finishSleep();
+assert.equal(live.day.clock, 0.28, 'and wake just after dawn');
+assert.equal(live.weather.intensity, 0, 'to a clear sky');
+assert.equal(live.weather.phase, 'clear', 'with the storm gone');
+
+// --- nonsense coordinates do not create phantom chests
+assert.equal(live.world.chestAt(NaN, NaN, NaN, true), null, 'a chest needs a real cell');
+assert.equal(live.world.chests.has('NaN,NaN,NaN'), false, 'so no phantom chest is filed under NaN');
+assert.equal(live.world.chestAt(-1, 5, 5, true), null, 'nor outside the world');
+const guardCell = { x: PAD.x - 4, y: padHeight + 2, z: PAD.z };
+assert.equal(live.world.placeBlock(guardCell.x, guardCell.y, guardCell.z, constants.CHEST), true, 'a chest goes down for the guard test');
+assert.ok(live.world.chestAt(guardCell.x, guardCell.y, guardCell.z, true) instanceof Map, 'a real cell still opens its chest');
+// --- and a hand-edited save cannot smuggle junk in
+const littered = new VoxelWorld(4242);
+littered.applyEdits(new Map(), new Map(), {
+  '10,20,10': { 5: 3, 0: 9, '-2': 4, 11: 0, 12: -3 },
+  'NaN,0,0': { 5: 1 },
+  '900,900,900': { 5: 1 },
+});
+assert.deepEqual([...littered.chests.keys()], ['10,20,10'], 'only the real chest survives');
+assert.deepEqual([...littered.chestAt(10, 20, 10).entries()], [[5, 3]], 'with only the sane stacks in it');
+// Leaving a save written, so the next boot of the suite starts from a known world.
+live.save();
 
 console.log(`web smoke test passed — ${game.renderer.meshes.size} chunks meshed, ${glStub.stats.draws} draw calls, water blocks: ${waterCount}`);
 void CHUNK; void SEA_LEVEL;

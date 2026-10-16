@@ -7,7 +7,7 @@
 
 import {
   AIR, BED, BIRCH_LOG, CHEST, DIAMOND_ORE, DOOR, HOTBAR, LADDER, LOG, PALETTE, REACH, RECIPES,
-  SAPLING, SPRUCE_LOG, TORCH, blockById,
+  SAPLING, SPRUCE_LOG, TORCH, WATER, blockById,
 } from './constants.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
@@ -15,7 +15,6 @@ import { Particles } from './particles.js';
 import { Player } from './player.js';
 import { Renderer } from './renderer.js';
 import { Settings } from './settings.js';
-import { StartMenu } from './menu.js';
 import { BrowserSave, randomSeed, seedFromLocation } from './storage.js';
 import { Ui } from './ui.js';
 import { Weather } from './weather.js';
@@ -24,6 +23,10 @@ import { VoxelWorld } from './world.js';
 import { DayCycle, Footsteps, Mining, describeTarget, isNight } from './gameplay.js';
 import { placementCell, raycast } from './raycast.js';
 import { addTo, canCraft, countOf, craft, craftable, missingFor, spend } from './crafting.js';
+import { DEATH_MESSAGES, Health, fallDamage } from './health.js';
+import { DEFAULT_MODE, MODES, formatTime, modeById, modeChip, randomModeId } from './modes.js';
+import { StartMenu, buildDailyTeaser, buildModeRow, buildRecentRow } from './menu.js';
+import { challengeSummary, completeGoal, dailyGoals, dailySeed, loadDaily, saveDaily, todayKey } from './challenges.js';
 
 const AUTOSAVE_SECONDS = 5;
 const ACTION_REPEAT = 0.22;    // seconds between placed blocks while the button is held
@@ -54,6 +57,16 @@ export class PixeledGame {
     this.openChest = null;               // the chest whose contents are on screen, if any
     this.craftOpen = false;
     this.sleeping = 0;                   // seconds of the fade to morning left to run
+    this.health = new Health();
+    this.dead = false;                   // the death screen is up and the controls are parked
+    this.mode = modeById(DEFAULT_MODE);  // survival until a mode card says otherwise
+    this.runTime = 0;                    // the speedrun clock
+    this.runDone = null;                 // the finishing time, once the goal is met
+    this.dayKey = todayKey();
+    this.dailyGoals = dailyGoals(this.dayKey);
+    this.dailyState = { day: this.dayKey, done: [], streak: 0, best: 0, total: 0 };
+    this.challengeStats = { broken: 0, placed: 0, distance: 0, torches: 0, logs: 0, crafted: 0, diamonds: 0, lowestY: null, dawns: 0, swum: 0 };
+    this.challengeOpen = false;
     this.slotBlocks = [...HOTBAR];       // the palette can swap what each hotbar key holds
     this.worldTimer = 0;                 // seconds until the next world simulation tick
     this.damage = 0;                     // lava hurts over time, not instantly
@@ -88,12 +101,15 @@ export class PixeledGame {
       closePalette: () => this.togglePalette(false),
       closeCraft: () => this.toggleCraft(false),
       closeStorage: () => this.closeStorage(),
+      closeChallenges: () => this.toggleChallenges(false),
+      shareSeed: () => this.shareSeed(),
       craft: recipe => this.doCraft(recipe),
       takeFromStorage: id => this.takeFromStorage(id),
       storeHeld: () => this.storeHeld(),
       fullscreen: () => this.toggleFullscreen(),
       toggleSound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu?.setSound(enabled); return enabled; },
       selectHotbar: index => this.selectHotbar(index),
+      respawn: () => this.respawn(),
     });
 
     this.input = new Input(canvas, {
@@ -104,6 +120,7 @@ export class PixeledGame {
       toggleHelp: () => (document.getElementById('help-modal')?.hidden ? this.openHelp() : this.closeHelp()),
       togglePalette: () => this.togglePalette(),
       toggleCraft: () => this.toggleCraft(),
+      toggleChallenges: () => this.toggleChallenges(),
       toggleDebug: () => this.toggleDebug(),
       toggleCamera: () => this.toggleCamera(),
       interact: () => this.interact(),
@@ -120,11 +137,15 @@ export class PixeledGame {
     });
 
     this.saved = this.storage.load();
+    if (this.saved?.mode) this.mode = modeById(this.saved.mode);
+    if (this.saved?.daily) this.dailyState = loadDaily(this.storage, todayKey());
     const seed = seedFromLocation() ?? (this.saved ? this.saved.seed : randomSeed());
     this.createWorld(seed, this.saved && this.saved.seed === seed);
     this.ui.setSound(this.audio.enabled);
 
     this.menu = new StartMenu({
+      surprise: () => this.surprise(),
+      daily: () => this.startWorld(this.dailySeedToday(), this.mode.id),
       play: () => this.resume(),
       resume: () => this.resume(),
       fresh: () => { this.newWorld(); this.resume(); },
@@ -145,6 +166,12 @@ export class PixeledGame {
       document.getElementById('menu-settings')?.classList.toggle('active', open);
       this.audio.blip(open ? 640 : 480, 0.05, 'triangle', 0.02);
     });
+    this.setMode(this.mode.id, { silent: true });
+    this.readRecentWorlds();
+    this.refreshChallenges();
+    // The start-screen shelves: today's goals and the worlds you played last. (The mode cards are
+    // rebuilt by setMode, which has already run above.)
+    this.refreshRecentRow();
     this.ui.setBiomeReadout(this.settings.get('minimap'));
     this.ui.setPaletteOpener(() => this.togglePalette());
     this.ui.setMinimapVisible(this.settings.get('minimap'));
@@ -159,15 +186,26 @@ export class PixeledGame {
 
   // ------------------------------------------------------------------ world
 
-  createWorld(seed, restore) {
-    this.world = new VoxelWorld(seed);
-    if (restore && this.saved?.edits) this.world.applyEdits(this.saved.edits);
+  createWorld(seed, restore, { flat = null } = {}) {
+    const flatWorld = flat ?? Boolean(this.mode?.rules?.flat);
+    this.world = new VoxelWorld(seed, { flat: flatWorld });
+    if (restore && this.saved?.edits) {
+      this.world.applyEdits(this.saved.edits, this.saved.metaEdits, this.saved.chests);
+    }
     this.player = new Player(this.world);
     if (restore && this.saved?.player) {
       const saved = this.saved.player;
       this.player.x = saved.x; this.player.y = saved.y; this.player.z = saved.z;
       this.player.yaw = saved.yaw; this.player.pitch = saved.pitch;
       this.player.velocityX = this.player.velocityY = this.player.velocityZ = 0;
+    }
+    // Your backpack comes back too: a save without one (an older save) starts you empty.
+    this.inventory = new Map();
+    if (restore && this.saved?.inventory) {
+      for (const [id, count] of Object.entries(this.saved.inventory)) {
+        const blockId = Number(id);
+        if (Number.isFinite(blockId) && blockId > 0 && count > 0) this.inventory.set(blockId, count);
+      }
     }
     this.selected = restore && Number.isInteger(this.saved?.selected) ? Math.max(0, Math.min(HOTBAR.length - 1, this.saved.selected)) : 0;
     this.clock = restore && typeof this.saved?.clock === 'number' ? this.saved.clock : 0.36;
@@ -181,8 +219,18 @@ export class PixeledGame {
     this.total = this.renderer.requestAllChunks();
     this.remaining = this.total;
     this.loaded = false;
-    this.ui.loading({ show: !this.paused, progress: 0, message: 'Carving hills, caves and trees…' });
-    this.menu?.setWorld({ seed: this.world.seed, hasSave: Boolean(this.saved), edits: this.world.edits.size });
+    this.ui.loading({
+      show: !this.paused,
+      progress: 0,
+      message: flatWorld ? 'Laying out a flat world…' : 'Carving hills, caves and trees…',
+    });
+    this.menu?.setWorld({
+      seed: this.world.seed,
+      mode: this.mode?.name ?? 'Survival',
+      flat: flatWorld,
+      hasSave: Boolean(this.saved),
+      edits: this.world.edits.size,
+    });
   }
 
   newWorld() {
@@ -336,6 +384,71 @@ export class PixeledGame {
   }
 
   /**
+   * Switch mode. The rules are applied to the live player at once, so a card on the start screen is
+   * an immediate change rather than a restart.
+   */
+  setMode(id, { silent = false } = {}) {
+    const mode = modeById(id);
+    this.mode = mode;
+    const rules = mode.rules;
+    this.creativeMode = rules.infiniteBlocks;
+    this.instantMine = rules.instantMine;
+    this.invulnerable = !rules.health;
+    if (rules.fly) this.player.flying = true;
+    this.ui.setMode(modeChip(mode));
+    this.ui.setRunTimer(rules.timer);
+    // The shelf highlights whichever card is live, wherever the switch came from.
+    buildModeRow(this.menu?.modeRow, MODES, { active: mode.id, onPick: id => this.pickMode(id) });
+    if (rules.timer) { this.runTime = 0; this.runDone = null; }
+    if (!silent) this.ui.toast(`${mode.name}: ${mode.hook}`, 3600);
+    return mode;
+  }
+
+  get running() { return this.mode.rules.timer && this.runDone === null && !this.paused; }
+
+  /**
+   * Take damage from whatever just happened. The health model decides whether it counts (a mercy
+   * window after each hit), and the screen flashes so you can feel it.
+   */
+  hurt(amount, cause = 'hurt') {
+    if (this.invulnerable) return 0;                 // creative and sandbox worlds cannot hurt you
+    const lost = this.health.hurt(amount, cause);
+    if (!lost) return 0;
+    this.flash = Math.min(1, HURT_FLASH + lost * 0.05);
+    this.audio.hurt();
+    if (this.health.isDead) this.die(cause);
+    return lost;
+  }
+
+  /** Down to zero hearts: the world stays, you get a screen and a button. */
+  die(cause = 'hurt') {
+    if (this.dead) return false;
+    this.dead = true;
+    this.input.enabled = false;
+    this.input.mining = false;
+    this.ui.setDeath(true, DEATH_MESSAGES[cause] ?? DEATH_MESSAGES.hurt);
+    this.audio.die();
+    this.dirty = true;
+    return true;
+  }
+
+  /** Back on your feet where you started, at full health, keeping everything you were carrying. */
+  respawn() {
+    if (!this.dead) return false;
+    this.dead = false;
+    this.health.respawn();
+    this.player.spawnAt(this.world);
+    this.player.flying = false;
+    this.player.fallDistance = 0;
+    this.flash = 0;
+    this.ui.setDeath(false);
+    this.input.enabled = true;
+    this.ui.toast('Back at your spawn point. Your blocks are still in the bag', 3200);
+    this.audio.heal();
+    return true;
+  }
+
+  /**
    * E (or a tap on an interactive block): doors swing, chests open their contents, beds let you
    * sleep through the night.
    */
@@ -353,12 +466,11 @@ export class PixeledGame {
         return 'door';
       }
       case 'chest': {
-        this.openStorage(hit.x, hit.y, hit.z);
-        return 'chest';
+        return this.openStorage(hit.x, hit.y, hit.z) ? 'chest' : null;
       }
       case 'bed': {
-        this.sleep(hit.x, hit.y, hit.z);
-        return 'bed';
+        // A refused nap (it is daytime) is not an interaction.
+        return this.sleep(hit.x, hit.y, hit.z) ? 'bed' : null;
       }
       default:
         this.ui.toast(`${block.name} is not something you can use`);
@@ -421,13 +533,15 @@ export class PixeledGame {
     this.player.y = Math.max(this.player.y, this.world.blockTop(x, y, z) ?? this.player.y);
     this.sleeping = 1.6;
     this.ui.setSleep(true);
-    this.audio.blip(300, 0.5, 'sine', 0.05);
+    this.audio.sleep();
     return true;
   }
 
   finishSleep() {
     this.sleeping = 0;
     this.day.clock = 0.28;                    // a little after dawn
+    // A new morning comes with new weather: the front that was overhead has moved on.
+    this.weather.reset();
     this.ui.setSleep(false);
     this.ui.toast('Good morning', 2600);
     this.dirty = true;
@@ -464,12 +578,157 @@ export class PixeledGame {
       this.refreshCraft();
       return 0;
     }
-    this.audio.craft?.();
+    this.audio.craftSound?.() ?? this.audio.select();
     this.ui.toast(`Crafted ${recipe.count > 1 ? recipe.count + ' ' : ''}${blockById(recipe.out).name.toLowerCase()}`);
     this.milestone('first-craft', 'Crafting! Ingredients go in, building blocks come out');
     this.refreshCraft();
     this.ui.setSlotBlock(this.selected, this.slotBlock());
     return result;
+  }
+
+  /**
+   * Keep the daily-challenge stats in step and tick a goal off the moment it lands. Cheap: it reads
+   * the tally the game already keeps and only writes when something actually completes.
+   */
+  updateChallenges(dt = 0) {
+    const stats = this.challengeStats;
+    stats.broken = this.tally.broken;
+    stats.placed = this.tally.placed + (stats.placedExtra ?? 0);
+    stats.distance = this.tally.distance;
+    const y = Math.floor(this.player.y);
+    if (stats.lowestY === null || y < stats.lowestY) stats.lowestY = y;
+    if (this.player.headUnder) stats.swum += (this.player.speedNow ?? 0) * dt;
+
+    let changed = false;
+    for (const goal of this.dailyGoals) {
+      if (this.dailyState.done.includes(goal.id)) continue;
+      const complete = goal.of(stats) >= goal.value;
+      if (!complete) continue;
+      const { state, streak } = completeGoal(this.storage, goal.id, this.dayKey);
+      this.dailyState = state;
+      changed = true;
+      const left = this.dailyGoals.length - state.done.length;
+      this.ui.toast(`Daily goal: ${goal.label} ✓${left > 0 ? ` — ${left} to go` : ''}`, 4200);
+      this.audio.chime?.([660, 880]);
+      if (left === 0) {
+        this.ui.toast(`Daily challenge complete — ${streak} day streak!`, 5200);
+        this.audio.chime?.([523, 659, 784, 1046]);
+      }
+    }
+    if (changed) this.refreshChallenges();
+    return changed;
+  }
+
+  dailySeedToday() { return dailySeed(this.dayKey); }
+
+  /** Picking a mode card: remember it, and offer to switch the live world if it needs a new kind. */
+  pickMode(id) {
+    this.setMode(id);
+    // A flat sandbox needs a flat world: rebuild it now, keeping the seed the player was given.
+    const needsFlatWorld = this.mode.rules.flat !== Boolean(this.world?.flat);
+    if (needsFlatWorld) {
+      this.startWorld(this.world.seed, id);
+      return id;
+    }
+    this.save();
+    return id;
+  }
+
+  refreshChallenges() {
+    const summary = challengeSummary(this.dailyGoals, this.challengeStats, this.dailyState);
+    this.ui.buildChallenges(summary, {
+      day: this.dayKey,
+      streak: this.dailyState.streak,
+      best: this.dailyState.best,
+      seed: dailySeed(this.dayKey),
+    });
+    buildDailyTeaser(this.menu?.dailyGoals, summary);
+    return summary;
+  }
+
+  /** J: the daily challenge panel with its progress bars. */
+  toggleChallenges(force) {
+    const open = force === undefined ? !this.challengeOpen : Boolean(force);
+    this.challengeOpen = open;
+    this.ui.setChallenges(open);
+    if (open) this.refreshChallenges();
+    return open;
+  }
+
+  /** The "surprise me" button: a random mode and a random world, playing straight away. */
+  surprise() {
+    const mode = randomModeId();
+    const seed = Math.floor(Math.random() * 899999) + 100000;
+    this.setMode(mode, { silent: true });
+    this.startWorld(seed, mode);
+    this.ui.toast(`Surprise: ${this.mode.name} on seed ${seed}`, 4200);
+    return { seed, mode };                       // the id, since that is what callers switch on
+  }
+
+  /**
+   * Start a specific world in a specific mode: the shared path for the seed box, the daily
+   * challenge, "surprise me" and the recent-worlds row.
+   */
+  startWorld(seed, modeId = this.mode.id) {
+    const value = Number(seed) || 1;
+    this.setMode(modeId, { silent: true });
+    this.createWorld(value, false);           // a fresh world, a fresh backpack
+    this.player.spawnAt(this.world);
+    this.health.respawn();
+    this.dead = false;
+    this.ui.setDeath(false);
+    this.menu.setWorld({ seed: value, mode: this.mode.name, hasSave: false, edits: 0 });
+    this.rememberWorld(value, modeId);
+    this.save();
+    this.resume();
+    this.ui.toast(`${this.mode.name} · seed ${value}`, 3600);
+    return value;
+  }
+
+  /** The last few worlds played: a "recent" row on the start screen, like a games shelf. */
+  rememberWorld(seed, modeId) {
+    try {
+      const raw = this.storage.get?.('pixeled-recent-v1');
+      const list = Array.isArray(raw) ? raw : JSON.parse(raw ?? '[]');
+      const next = [{ seed, mode: modeId, at: Date.now() }, ...list.filter(entry => entry.seed !== seed)].slice(0, 4);
+      this.storage.set?.('pixeled-recent-v1', JSON.stringify(next));
+      this.recent = next;
+      this.refreshRecentRow();
+      return next;
+    } catch (_) {
+      this.recent = [];
+      return [];
+    }
+  }
+
+  /** Redraw the recent-worlds shelf. Called at boot and every time a world is started. */
+  refreshRecentRow() {
+    return buildRecentRow(this.menu?.recentRow, this.menu?.recentTitle, this.recent ?? [], entry => {
+      this.startWorld(entry.seed, entry.mode ?? this.mode.id);
+    });
+  }
+
+  readRecentWorlds() {
+    try {
+      const raw = this.storage.get?.('pixeled-recent-v1');
+      const list = Array.isArray(raw) ? raw : JSON.parse(raw ?? '[]');
+      this.recent = Array.isArray(list) ? list.slice(0, 4) : [];
+    } catch (_) {
+      this.recent = [];
+    }
+    return this.recent;
+  }
+
+  /** Copy a link that opens this exact world: the seed travels in the query string. */
+  async shareSeed() {
+    const link = `${location.origin}${location.pathname}?seed=${this.world.seed}`;
+    try {
+      await navigator.clipboard?.writeText(link);
+      this.ui.toast(`Link copied — seed ${this.world.seed}`, 3600);
+    } catch (_) {
+      this.ui.toast(`Seed ${this.world.seed} — add ?seed=${this.world.seed} to the address`, 5200);
+    }
+    return link;
   }
 
   /** F3: the debug panel with coordinates, chunk, light levels and draw counts. */
@@ -575,17 +834,27 @@ export class PixeledGame {
    */
   excavate(dt) {
     const hit = this.target();
-    const result = this.mining.hold(dt, hit, this.world);
+    // Creative mining is instant, so the swing never has to wait for hardness.
+    const result = this.instantMine && hit && this.world.get(hit.x, hit.y, hit.z) !== AIR
+      ? { progress: 1, digging: true, broken: true, tick: false, blockId: this.world.get(hit.x, hit.y, hit.z) }
+      : this.mining.hold(dt, hit, this.world);
     if (result.tick) this.audio.digTick(result.blockId);
     if (!result.broken) return result;
 
     const blockId = result.blockId;
+    // A broken chest gives up its contents rather than taking them with it.
+    const wasChest = blockById(blockId).interactive === 'chest';
+    const spill = wasChest ? [...(this.world.chestAt(hit.x, hit.y, hit.z) ?? [])] : [];
     this.world.set(hit.x, hit.y, hit.z, AIR);
     this.renderer.invalidate(this.world, hit.x, hit.z);
     this.audio.dig(blockId);
     this.tally.broken++;
     this.dirty = true;
     addTo(this.inventory, blockId, 1);
+    if (spill.length) {
+      for (const [id, count] of spill) addTo(this.inventory, id, count);
+      this.ui.toast(`The chest spilled ${spill.length === 1 ? 'its stack' : `all ${spill.length} stacks`} into your backpack`);
+    }
     // Breaking a wall next to water lets it in, one tick at a time.
     this.world.wakeWater(hit.x, hit.y, hit.z);
     // Leaves sometimes drop a sapling, which the palette can plant back into the ground.
@@ -607,7 +876,16 @@ export class PixeledGame {
       if (cleared.length) this.renderer.invalidate(this.world, hit.x, hit.z);
     }
     this.checkMilestones();
-    if (blockId === DIAMOND_ORE) this.milestone('diamond', 'Diamond! They only sit below y=14, so dig deep');
+    if (blockId === DIAMOND_ORE) {
+      this.challengeStats.diamonds++;
+      this.milestone('diamond', 'Diamond! They only sit below y=14, so dig deep');
+      if (this.mode.rules.timer && this.runDone === null) {
+        this.runDone = this.runTime;
+        this.ui.setRunTime(this.runTime, this.runDone);
+        this.ui.toast(`Speedrun done in ${formatTime(this.runDone)}!`, 6000);
+        this.audio.chime?.([523, 659, 784, 1046]);
+      }
+    }
     else if ([LOG, BIRCH_LOG, SPRUCE_LOG].includes(blockId)) this.milestone('first-log', 'Timber! Logs make planks, planks make a house');
     if (this.settings.get('particles')) {
       const colour = this.particleColour(blockId);
@@ -626,12 +904,16 @@ export class PixeledGame {
     if (!hit) { this.ui.toast('Aim at a block first'); return false; }
     const cell = placementCell(hit);
     if (!this.world.inside(cell.x, cell.y, cell.z)) { this.ui.toast('That is outside the world'); return false; }
-    if (this.world.get(cell.x, cell.y, cell.z) !== AIR) return false;
+    // Water and plants give way to a block placed against them; anything solid refuses.
+    const there = this.world.get(cell.x, cell.y, cell.z);
+    const replace = there === WATER || blockById(there).plant;
+    if (there !== AIR && !replace) return false;
     const id = this.slotBlock();
     if (this.playerOccupies(cell)) { this.ui.toast('Make a little room first'); return false; }
     const placed = this.world.placeBlock(cell.x, cell.y, cell.z, id, {
       yaw: this.player.yaw,
       face: hit.normal ?? null,
+      replace,
     });
     if (!placed) { this.ui.toast(`${blockById(id).name} will not go there`); return false; }
     this.renderer.invalidate(this.world, cell.x, cell.z);
@@ -641,7 +923,12 @@ export class PixeledGame {
     this.checkMilestones();
     if (this.settings.get('particles')) this.particles.burst(cell.x, cell.y, cell.z, this.particleColour(id), 8, 0.3, 2.2);
     if (id === SAPLING) this.world.plantSapling(cell.x, cell.y, cell.z);
-    spend(this.inventory, id, 1);
+    // Remember which way the block went down, so the one in your hand mirrors it.
+    this.lastPlacedMeta = this.world.metaAt?.(cell.x, cell.y, cell.z) ?? 0;
+    // Infinite blocks in creative and sandbox: placing never spends anything.
+    if (!this.creativeMode) spend(this.inventory, id, 1);
+    this.challengeStats.placed++;
+    if (id === TORCH) this.challengeStats.torches++;
     return true;
   }
 
@@ -762,7 +1049,7 @@ export class PixeledGame {
       if (Math.random() < dt * 2.2) this.audio.bubble();
       if (this.damage > 0.55) {
         this.damage = 0;
-        this.flash = HURT_FLASH;
+        this.hurt(2, 'lava');
         this.milestone('lava', 'Lava burns — build across it, or fly over it');
       }
     } else {
@@ -773,10 +1060,32 @@ export class PixeledGame {
     if (this.player.headUnder) {
       if (Math.random() < dt * 0.5) this.audio.bubble();
       if (this.player.breath <= 0) {
-        this.flash = HURT_FLASH;
+        this.hurt(2, 'drown');
         this.player.breath = 4;                 // one gulp of air, then the bar drains again
         this.player.velocityY = Math.max(this.player.velocityY, 3.4);
       }
+    }
+
+    // ---- falling hurts, and the void kills --------------------------------------
+    if (this.player.landedHard > 0) {
+      const damage = fallDamage(this.player.landedHard);
+      if (damage > 0) {
+        this.hurt(damage, 'fall');
+        this.audio.land(Math.min(2.4, 0.6 + this.player.landedHard / 8));
+        this.milestone('first-fall', 'That hurt. Water and hay break a fall — so does flying');
+      }
+    }
+    if (this.player.y < 1) this.hurt(20, 'void');
+    this.health.update(dt);
+    if (this.health.healed > 0 && this.lastHeal !== this.health.healed) {
+      this.lastHeal = this.health.healed;
+      this.audio.heal();
+    }
+    // Three hearts or fewer: the edges of the screen pulse red with your heartbeat.
+    if (this.health.ratio <= 0.35 && !this.health.isDead) {
+      const beat = 0.5 + 0.5 * Math.sin((this.day?.elapsed ?? 0) * 6);
+      this.flash = Math.max(this.flash, 0.1 + 0.16 * beat);
+      this.pulse = beat;
     }
     this.flash = Math.max(0, this.flash - dt * 0.9);
 
@@ -801,8 +1110,30 @@ export class PixeledGame {
       if (this.sleeping === 0) this.finishSleep();
     }
 
+    // ---- rain splashes on the ground --------------------------------------------
+    this.splashTimer = (this.splashTimer ?? 0) - dt;
+    if (this.splashTimer <= 0 && this.weather?.intensity > 0.15 && !this.player.headUnder && !this.player.inWater) {
+      this.splashTimer = 0.06 + Math.random() * 0.08;
+      if (this.settings.get('particles')) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 2 + Math.random() * 6;
+        const x = Math.floor(this.player.x + Math.cos(angle) * radius);
+        const z = Math.floor(this.player.z + Math.sin(angle) * radius);
+        const top = this.world.surfaceHeight(x, z);
+        // Only nearby ground: a splash you cannot see is a wasted particle.
+        if (Math.abs(top + 1 - this.player.y) < 5 && this.world.get(x, top, z) !== WATER) {
+          this.particles.rainSplash(x + 0.5, top + 1, z + 0.5, this.weather.intensity);
+        }
+      }
+    }
+
     // ---- clock and weather ------------------------------------------------------
     this.day.update(dt);
+
+    // ---- the speedrun clock and the daily goals ---------------------------------
+    if (this.running) this.runTime += dt;
+    this.ui.setRunTime(this.runTime, this.runDone);
+    this.updateChallenges(dt);
     this.clock = this.day.clock;
     const biome = this.world.biomeNameAt(this.player.x, this.player.z);
     this.weather.update(dt, { snowBiome: biome === 'snow' || biome === 'mountains' && this.player.y > 34 });
@@ -824,8 +1155,11 @@ export class PixeledGame {
     this.fovSmooth += (this.fov * stretch - this.fovSmooth) * Math.min(1, dt * 4);
 
     this.particles.update(dt, this.world);
+    const heldBlock = blockById(this.slotBlock());
+    // A partial block in hand keeps its shape, and its facing comes from the last one placed.
     const held = this.settings.get('viewmodel')
-      ? { block: blockById(this.slotBlock()), swing: this.swing, bright: weather.intensity > 0.35 ? 0.78 : 1 }
+      ? { block: heldBlock, swing: this.swing, meta: this.lastPlacedMeta ?? 0,
+          bright: weather.intensity > 0.35 ? 0.78 : 1 }
       : null;
 
     const stats = this.renderer.render({
@@ -833,6 +1167,7 @@ export class PixeledGame {
       time: now / 1000, clock: this.clock, fov: this.fovSmooth || this.fov,
       mineProgress: this.input.mining ? this.mining.progress : 0,
       held, weather, submerged: this.player.headUnder ? 1 : 0, flash: this.flash,
+      aurora: this.biome === 'snow' || this.biome === 'mountains' ? 1 : 0,
       particles: this.settings.get('particles') ? this.particles.visible() : null,
       viewDistance: this.viewDistance,
       wind: 1 + weather.intensity * 1.6,          // storms shake the grass harder
@@ -901,6 +1236,7 @@ export class PixeledGame {
       this.mapTimer = 0;
       this.ui.drawMinimap(this.world, position.x, position.z, this.player.yaw);
     }
+    this.ui.drawHealth(this.ui.hearts ?? document.getElementById('hearts'), this.health);
     this.ui.setStatus({
       fps: this.fps,
       position,
@@ -942,6 +1278,11 @@ export class PixeledGame {
       broken: this.tally.broken,
       placed: this.tally.placed,
       steps: this.tally.steps,
+      mode: this.mode.id,
+      daily: this.dailyState,
+      metaEdits: this.world.metaEdits,
+      chests: Object.fromEntries([...this.world.chests].map(([key, contents]) => [key, Object.fromEntries(contents)])),
+      inventory: this.inventory,
     });
     if (!ok) this.ui.toast('This browser blocked saving');
     this.dirty = false;
