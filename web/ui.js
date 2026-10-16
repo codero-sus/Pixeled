@@ -1,6 +1,7 @@
 /** All the HTML around the canvas: hotbar, HUD, loading screen, toasts and the help sheet. */
 
 import { BLOCKS, HOTBAR, blockById } from './constants.js';
+import { itemList } from './items.js';
 export { HOTBAR };
 import { sunHeight } from './renderer.js';
 import { formatTime } from './modes.js';
@@ -268,11 +269,13 @@ export class Ui {
   }
 
   /** A one-line summary of the backpack, listed at the top of the crafting panel. */
-  setCraftInventory(inventory = new Map(), limit = 14) {
+  setCraftInventory(inventory = new Map(), limit = 14, bag = null) {
     const element = document.getElementById('craft-inventory');
     if (!element) return 0;
     const entries = [...inventory.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]);
-    if (!entries.length) { element.textContent = 'Your backpack is empty — go and dig something'; return 0; }
+    // Apples and berries are carried next to the blocks, so the backpack lists both.
+    const food = itemList(bag, limit);
+    if (!entries.length && !food.length) { element.textContent = 'Your backpack is empty — go and dig something'; return 0; }
     element.replaceChildren();
     for (const [id, count] of entries.slice(0, limit)) {
       const chip = document.createElement('span');
@@ -280,7 +283,13 @@ export class Ui {
       chip.innerHTML = `<i style="background:${rgb(blockById(id).side)}"></i>${blockById(id).name} <b>${count}</b>`;
       element.append(chip);
     }
-    return Math.min(entries.length, limit);
+    for (const entry of food) {
+      const chip = document.createElement('span');
+      chip.className = 'inv-chip food';
+      chip.innerHTML = `<i style="background:${entry.item.hex}"></i>${entry.item.name} <b>${entry.count}</b>`;
+      element.append(chip);
+    }
+    return Math.min(entries.length, limit) + food.length;
   }
 
   // ------------------------------------------------------------------ storage
@@ -343,6 +352,29 @@ export class Ui {
   }
 
   // ------------------------------------------------------------------ modes
+
+  /**
+   * The bag chip: what you are carrying that is not a block, and a button that eats the first thing
+   * worth eating. Hidden while the bag is empty, so the HUD stays quiet until food exists.
+   */
+  refreshBag(bag = new Map(), { onEat = null } = {}) {
+    const element = document.getElementById('bag');
+    if (!element) return 0;
+    const entries = itemList(bag);
+    if (!entries.length) {
+      element.hidden = true;
+      element.textContent = '';
+      return 0;
+    }
+    element.hidden = false;
+    element.textContent = entries.map(entry => `${entry.item.icon} ${entry.count}`).join('  ');
+    element.title = `${entries.map(entry => `${entry.count} ${entry.item.name.toLowerCase()}${entry.count === 1 ? '' : 's'}`).join(', ')} — click or press Q to eat`;
+    if (onEat && !element.dataset.bound) {
+      element.dataset.bound = '1';
+      element.addEventListener('click', () => onEat());
+    }
+    return entries.length;
+  }
 
   /** The mode chip in the corner: icon, name and the badge the card carried. */
   setMode(chip) {

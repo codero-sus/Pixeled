@@ -7,7 +7,7 @@
 
 import {
   AIR, BED, BIRCH_LOG, CHEST, DIAMOND_ORE, DOOR, HOTBAR, LADDER, LOG, PALETTE, REACH, RECIPES,
-  SAPLING, SPRUCE_LOG, TORCH, WATER, blockById,
+  SAPLING, SPRUCE_LOG, TALL_GRASS, TORCH, WATER, blockById,
 } from './constants.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
@@ -23,6 +23,7 @@ import { VoxelWorld } from './world.js';
 import { DayCycle, Footsteps, Mining, describeTarget, isNight } from './gameplay.js';
 import { placementCell, raycast } from './raycast.js';
 import { addTo, canCraft, countOf, craft, craftable, missingFor, spend } from './crafting.js';
+import { addItem, eat, firstFood, itemCount } from './items.js';
 import { DEATH_MESSAGES, Health, fallDamage } from './health.js';
 import { DEFAULT_MODE, MODES, formatTime, modeById, modeChip, randomModeId } from './modes.js';
 import { StartMenu, buildDailyTeaser, buildModeRow, buildRecentRow } from './menu.js';
@@ -54,6 +55,7 @@ export class PixeledGame {
     this.tally = { broken: 0, placed: 0, steps: 0, distance: 0 };
     this.milestones = new Set();
     this.inventory = new Map();          // block id -> how many you have dug up
+    this.bag = new Map();                // item id -> how many apples and berries you are carrying
     this.openChest = null;               // the chest whose contents are on screen, if any
     this.craftOpen = false;
     this.sleeping = 0;                   // seconds of the fade to morning left to run
@@ -124,6 +126,7 @@ export class PixeledGame {
       toggleDebug: () => this.toggleDebug(),
       toggleCamera: () => this.toggleCamera(),
       interact: () => this.interact(),
+      eat: () => this.eatSomething(),
       closeHelp: () => this.closeHelp(),
       onEscape: () => this.escape(),
       onKey: code => Boolean(this.menu?.onKey(code)),
@@ -207,6 +210,15 @@ export class PixeledGame {
         if (Number.isFinite(blockId) && blockId > 0 && count > 0) this.inventory.set(blockId, count);
       }
     }
+    this.bag = new Map();
+    if (restore && this.saved?.bag) {
+      for (const [id, count] of Object.entries(this.saved.bag)) {
+        if (itemCount({ get: () => count }, id) > 0) addItem(this.bag, id, count);
+      }
+    }
+    this.spawnPoint = restore && this.saved?.spawn && Number.isFinite(this.saved.spawn.x)
+      ? { x: this.saved.spawn.x, y: this.saved.spawn.y, z: this.saved.spawn.z }
+      : null;
     this.selected = restore && Number.isInteger(this.saved?.selected) ? Math.max(0, Math.min(HOTBAR.length - 1, this.saved.selected)) : 0;
     this.clock = restore && typeof this.saved?.clock === 'number' ? this.saved.clock : 0.36;
     this.day = new DayCycle(this.settings.effectiveDayLength, this.clock);
@@ -437,7 +449,7 @@ export class PixeledGame {
     if (!this.dead) return false;
     this.dead = false;
     this.health.respawn();
-    this.player.spawnAt(this.world);
+    this.player.spawnAt(this.world, this.spawnPoint);
     this.player.flying = false;
     this.player.fallDistance = 0;
     this.flash = 0;
@@ -525,6 +537,38 @@ export class PixeledGame {
     return true;
   }
 
+  /** Put something in the bag and keep the HUD chip in step with it. */
+  giveItem(id, count = 1) {
+    const total = addItem(this.bag, id, count);
+    if (total > 0) this.ui.refreshBag(this.bag, { onEat: () => this.eatSomething() });
+    return total;
+  }
+
+  /**
+   * Q: eat something out of the bag. Food heals, so it is a second chance after a bad fall — and it
+   * refuses politely when the bag is empty, when you are full, or when you are already dead.
+   */
+  eatSomething(id = null) {
+    if (this.dead) return false;
+    const which = id ?? firstFood(this.bag);
+    if (!which) { this.ui.toast('Nothing to eat — leaves drop apples, grass hides berries'); return false; }
+    if (this.health.points >= this.health.max) {
+      this.ui.toast('You are not hungry — save it for a rainy day');
+      return false;
+    }
+    const bite = eat(this.bag, which);
+    if (!bite.ok) { this.ui.toast(`No ${bite.name?.toLowerCase() ?? 'food'} left`); return false; }
+    const before = this.health.points;
+    this.health.heal(bite.heal);
+    const gained = this.health.points - before;
+    this.audio.craftSound();
+    if (gained > 0) this.ui.toast(`Ate a ${bite.name.toLowerCase()} — ${gained} health back`, 2600);
+    else this.ui.toast('That did nothing for you', 2000);
+    this.dirty = true;
+    this.ui.refreshBag(this.bag, { onEat: () => this.eatSomething() });
+    return true;
+  }
+
   /** Sleep the night away on a bed. Daytime naps are refused, exactly like the real thing. */
   sleep(x, y, z) {
     if (!isNight(this.day.clock)) { this.ui.toast('You can only sleep at night'); return false; }
@@ -532,6 +576,9 @@ export class PixeledGame {
     this.player.z = z + 0.5;
     this.player.y = Math.max(this.player.y, this.world.blockTop(x, y, z) ?? this.player.y);
     this.sleeping = 1.6;
+    // A bed you have slept in is where you wake up next time, exactly like it should be.
+    this.spawnPoint = { x: x + 0.5, y: this.player.y, z: z + 0.5 };
+    this.ui.toast('Spawn point set to this bed', 2600);
     this.ui.setSleep(true);
     this.audio.sleep();
     return true;
@@ -566,7 +613,7 @@ export class PixeledGame {
       missing: recipe => missingFor(this.inventory, recipe),
       onCraft: recipe => this.doCraft(recipe),
     });
-    this.ui.setCraftInventory(this.inventory);
+    this.ui.setCraftInventory(this.inventory, 14, this.bag);
     return this.ui.lastCraftable ?? 0;
   }
 
@@ -583,6 +630,7 @@ export class PixeledGame {
     this.milestone('first-craft', 'Crafting! Ingredients go in, building blocks come out');
     this.refreshCraft();
     this.ui.setSlotBlock(this.selected, this.slotBlock());
+    this.ui.refreshBag(this.bag, { onEat: () => this.eatSomething() });
     return result;
   }
 
@@ -865,6 +913,15 @@ export class PixeledGame {
         addTo(this.inventory, SAPLING, 1);
         this.ui.toast('A sapling! Plant it with the palette (B) and it will grow');
       }
+      // Apples come off leaves too, on their own roll, so a fallen tree pays for itself.
+      if (hash01(hit.x * 7 + hit.y, hit.z * 11 - hit.y, this.world.seed ^ 0x5f3a) < 0.12) {
+        this.giveItem('apple', 1);
+        this.ui.toast(`An apple! Press Q to eat it (${itemCount(this.bag, 'apple')} in the bag)`, 3000);
+      }
+    }
+    if (blockId === TALL_GRASS && hash01(hit.x * 13 + hit.y, hit.z * 3 + hit.y, this.world.seed ^ 0x1c2b) < 0.14) {
+      this.giveItem('berry', 1);
+      this.ui.toast(`A berry (${itemCount(this.bag, 'berry')} in the bag)`, 2400);
     }
     // A chopped trunk takes its leaves with it.
     if ([LOG, BIRCH_LOG, SPRUCE_LOG].includes(blockId)) {
@@ -1283,6 +1340,8 @@ export class PixeledGame {
       metaEdits: this.world.metaEdits,
       chests: Object.fromEntries([...this.world.chests].map(([key, contents]) => [key, Object.fromEntries(contents)])),
       inventory: this.inventory,
+      bag: this.bag,                       // a Map, like the inventory: storage.js serialises it
+      spawn: this.spawnPoint ?? null,
     });
     if (!ok) this.ui.toast('This browser blocked saving');
     this.dirty = false;

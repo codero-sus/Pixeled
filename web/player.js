@@ -64,8 +64,9 @@ export class Player {
     this.pitch = Math.max(-Math.PI / 2 + 0.02, Math.min(Math.PI / 2 - 0.02, this.pitch - deltaPitch));
   }
 
-  spawnAt(world) {
-    const spawn = world.spawnPoint();
+  /** Put the player at a bed they slept in, or at the world's own spawn when there is none. */
+  spawnAt(world, point = null) {
+    const spawn = point ?? world.spawnPoint();
     this.x = spawn.x; this.y = spawn.y; this.z = spawn.z;
     this.velocityX = this.velocityY = this.velocityZ = 0;
     this.onGround = false;

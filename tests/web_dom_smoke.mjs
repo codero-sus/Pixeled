@@ -650,5 +650,49 @@ assert.equal(byId.get('challenges').hidden, false, 'and is on screen');
 assert.equal(game.ui.setChallenges(false), false, 'and closes again');
 assert.equal(byId.get('challenges').hidden, true, 'back off screen');
 
+
+// =============================================================== v3.6: food, beds and touch buttons
+
+assert.ok(byId.has('bag'), 'index.html has a bag chip');
+assert.match(markup, /<button class="bag" id="bag" type="button" hidden/, 'which starts hidden');
+assert.match(stylesheet, /\.bag \{/, 'and is styled');
+assert.match(stylesheet, /\.inv-chip\.food i/, 'with a colour for the food chips');
+for (const action of ['use', 'eat']) {
+  assert.match(markup, new RegExp(`data-touch-action="${action}"`), `there is a touch button for ${action}`);
+}
+assert.match(markup, /<kbd>Q<\/kbd>/, 'and the help sheet documents Q');
+
+const { itemCount, addItem } = await import('../web/items.js');
+const bagChip = byId.get('bag');
+assert.equal(game.ui.refreshBag(new Map()), 0, 'an empty bag shows no chip');
+assert.equal(bagChip.hidden, true, 'so it stays out of the way');
+const food = new Map();
+addItem(food, 'apple', 3);
+addItem(food, 'berry', 1);
+let ate = 0;
+assert.equal(game.ui.refreshBag(food, { onEat: () => { ate++; } }), 2, 'two kinds of food fill the chip');
+assert.equal(bagChip.hidden, false, 'and it appears');
+assert.match(bagChip.textContent, /3/, 'with the apple count');
+assert.match(bagChip.textContent, /1/, 'and the berry count');
+assert.match(bagChip.title, /apple/i, 'the tooltip lists what you carry');
+bagChip.dispatch('click');
+assert.equal(ate, 1, 'clicking the chip eats something');
+bagChip.dispatch('click');
+assert.equal(ate, 2, 'every click, without rebinding the handler twice');
+assert.equal(game.ui.refreshBag(new Map()), 0, 'emptying the bag hides the chip again');
+assert.equal(bagChip.hidden, true, 'back out of the way');
+
+// the crafting panel lists food next to the blocks
+const blocks = new Map([[1, 12]]);
+const lunch = new Map();
+addItem(lunch, 'apple', 2);
+assert.equal(game.ui.setCraftInventory(blocks, 14, lunch), 2, 'the backpack lists a block and a food');
+const chips = [...byId.get('craft-inventory').children];
+assert.equal(chips.length, 2, 'one chip each');
+assert.match(chips[0].innerHTML, /Grass/, 'the block chip names its block');
+assert.match(chips[1].innerHTML, /Apple/, 'and the food chip names its food');
+assert.equal(chips[1].classList.contains('food'), true, 'marked as food');
+assert.equal(game.ui.setCraftInventory(new Map(), 14, new Map()), 0, 'an empty bag says so');
+
 console.log('web DOM smoke test passed — %d ids from index.html, menu, pause, drag-look and seeds all wired'
   .replace('%d', ids.length));
