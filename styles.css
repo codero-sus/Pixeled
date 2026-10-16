@@ -757,3 +757,71 @@ body.menu-open #game { cursor: default; }
   .breath { bottom: 150px; }
   .settings-row { grid-template-columns: 1fr 1fr 46px; font-size: 11px; }
 }
+
+/* ---------------------------------------------------------------- v3.3: palette, map, debug */
+
+.minimap {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(120px, calc(env(safe-area-inset-bottom) + 108px));
+  width: 118px;
+  height: 118px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(8, 16, 24, 0.6);
+  box-shadow: var(--shadow);
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.debug {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left));
+  top: 240px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(8, 16, 24, 0.7);
+  color: var(--mint);
+  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+  max-width: min(340px, 60vw);
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
+  margin: 12px 0 16px;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.palette-slot {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(10, 20, 30, 0.55);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.palette-slot:hover { border-color: rgba(179, 223, 158, 0.55); transform: translateY(-1px); }
+.palette-slot.active { border-color: var(--amber); background: rgba(255, 212, 121, 0.14); }
+.palette-slot .slot-block { width: 30px; height: 30px; border-radius: 6px; }
+.palette-name { text-align: center; line-height: 1.2; }
+.palette-count { color: var(--amber); font-variant-numeric: tabular-nums; min-height: 11px; }
+.palette-hint { color: var(--muted); font-size: 11px; margin: 0 0 4px; }
+.overlay.modal .card.wide { width: min(680px, 92vw); }
+
+@media (max-width: 560px) {
+  .minimap { width: 88px; height: 88px; bottom: max(150px, calc(env(safe-area-inset-bottom) + 140px)); }
+  .debug { top: 210px; font-size: 10px; }
+}

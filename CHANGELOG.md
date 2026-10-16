@@ -1,11 +1,119 @@
 # Pixeled — changelog
 
+*(Newest batch first after the intro. Batch two continues the numbering at 194.)*
+
 Numbered, and counted honestly: every line below is a discrete change that shipped in the commit next
 to it, and every one of them is covered by the test suites (`tests/web_smoke.mjs` 257 checks,
 `tests/web_dom_smoke.mjs` 87, `tests/web_shaders.mjs` 47, `tests/python_smoke.py` 25, plus the Java
 reference check). No padding, no round numbers invented after the fact.
 
-## v3.2 — the big polish batch (commit `76f39c1`)
+## v3.3 — light, lava and the living world
+
+### Light and darkness — 194-215
+
+194. A light engine (`web/light.js`): light is a flat 0-15 grid, poured out from every glowing block
+195. Whole-world light built with one multi-source breadth-first search, not one flood per torch
+196. Torch block (id 31) that lights 14 levels in every direction
+197. Lava block (id 30) that glows 12 levels and hurts to stand in
+198. Diamond ore glints with its own faint light again, now through the light system
+199. Light stops at anything opaque, so a sealed room really is pitch black
+200. Light flows through air, water, glass and ice, and stops at stone, dirt and logs
+201. Placing a wall casts a real shadow behind it
+202. Breaking a wall lets light pour through the hole
+203. Removing a torch takes its light back out of the world
+204. Correct light *removal* (a BFS that only unlights cells that were dimmer), not just re-lighting
+205. Skylight: anything above the terrain's skyline is lit, anything below is cave dark
+206. Digging a shaft from the surface down lets daylight into the cave under it
+207. The skyline is cached and repaired one column at a time, so digging does not rescan the world
+208. Mesher bakes the light level into the vertex colours, so caves read as dim rather than void
+209. A soft light curve: 0-15 becomes a 0.28-1.0 brightness instead of a hard cutoff
+210. A floor of ambient light keeps every block visible, so nothing renders pure black
+211. `world.lightAt()` / `world.torchLightAt()` / `world.lightSourceCount` for the HUD and tests
+212. Lava lakes generate below y = 12 only, in hollows with air above them
+213. Lava is not placeable — it is a hazard, not a building material
+214. HUD light readout, and the crosshair label now names the block *and* the light level
+215. Standing in lava washes the screen orange, and burns you every 0.55 seconds
+
+### The world simulates itself — 216-232
+
+216. Gravity blocks: sand, gravel and pumpkins fall when the block under them goes
+217. A queued fall system, so removing one support can start a whole column sliding
+218. Falling blocks animate across frames instead of teleporting
+219. Sapling block (id 32) that grows into a tree 24 ticks after it is planted
+220. Saplings grow the species that fits the biome — spruce in snow, wide-canopy swamp trees in swamps
+221. Leaves occasionally drop a sapling when you break them (22%, deterministic per cell)
+222. Leaf decay: chop a trunk and any leaf that cannot reach a log within five steps withers
+223. Decay runs as a flood fill out from the broken trunk, and reports what it cleared
+224. `world.worldTick()` drives falling, growing and withering on a quarter-second timer
+225. The game invalidates and re-meshes exactly the chunks a world tick touched
+226. Particles and sound for every fall and every growth
+227. **Bug fixed:** the lava/physics probe read the block *above* the player's feet, so players fell
+     straight through lava pools and out of the world
+228. Lava physics: thick, slow to swim through, barely lifts you, and holds you at its surface
+229. Wading flag for shallow water, so walking through a puddle is not the same as swimming
+230. Ambience: birds by day, crickets by night, drips underground, lava pops near lava
+231. Ambience is biome-flavoured and never plays during a storm
+232. Ambient sounds are scheduled with a randomised delay, not spammed per frame
+
+### Building and looking around — 233-252
+
+233. Block palette overlay listing all 30 placeable blocks
+234. The palette shows how many of each block you have dug up
+235. Picking a block from the palette fills the selected hotbar slot
+236. Each hotbar slot now keeps its own block choice
+237. Inventory: every block you mine is counted
+238. Placing a block takes one from the inventory
+239. Palette opens with `B` or the new HUD button, closes with the Done button or `B` again
+240. The palette parks the controls while it is open, exactly like the help sheet
+241. Minimap canvas in the corner: one pixel per block column, coloured by the surface block
+242. The minimap shades by height, so hills and valleys read at a glance
+243. A facing wedge and a centre dot mark the player on the map
+244. The minimap redraws a few times a second, not every frame
+245. The minimap follows the biome-readout setting, so it can be switched off
+246. Third-person camera on `F5`, pulling back 4.6 blocks with the view direction
+247. A blocky avatar (legs, body, head) that turns with the player for the third-person view
+248. The avatar is drawn before the world so the near plane never clips it
+249. The held block hides itself in third person, so it does not fill the screen
+250. Debug panel on `F3`: coordinates, chunk, biome, light, sky, frame rate, draw calls and tally
+251. The debug panel is built from the same status tick the HUD uses, so it can never drift
+252. Wind strength follows the weather — storms shake the grass harder than a calm morning
+
+### Tests for all of it — 253-273
+
+253. Light tests: a sealed stone room with one torch is lit inside and pitch black outside
+254. Light tests: the level drops by exactly one per block of distance
+255. Light tests: breaking the wall lets light through, and only through the hole
+256. Light tests: removing the torch darkens the room again and clears the source
+257. Light tests: placing a wall casts a shadow behind it
+258. Light curve tests: monotonic, never fully black, exactly 1.0 at full light
+259. Skylight tests: surface daylight, cave dark, and a dug shaft letting the sun in
+260. Lava generation tests: every seed has lava, and none of it above y = 13
+261. Gravity tests: a dropped block lands on the first solid cell and stops
+262. Gravity tests: gravel piles *on top* of sand instead of passing through it
+263. Gravity tests: breaking the support under a ledge drops the block above it
+264. Sapling tests: it does not grow instantly, grows within 30 ticks, and makes a trunk plus a crown
+265. Decay tests: leaves beside a trunk survive, leaves without one wither, and the trunk cell is safe
+266. Mesher tests: no vertex in any chunk is baked to pure black, in three different chunks
+267. Mesher tests: an unlit world still meshes, so the light engine stays optional
+268. Live-game tests: placing a torch lights its cell and its neighbours, removing it darkens them
+269. Live-game tests: the inventory fills up as you dig
+270. Live-game tests: the world tick runs in the real frame loop and sand actually lands on the pad
+271. Live-game tests: lava is detected, burns, warns once, and stops burning when you climb out
+272. Live-game tests: the palette fills slots, refuses water, and keeps per-slot blocks
+273. DOM tests: palette grid, counts, highlight, open/close through the HUD, debug text, minimap pixels
+
+### Small fixes found while testing — 274-281
+
+274. **Bug fixed:** `togglePalette()` without an argument closed instead of toggling
+275. **Bug fixed:** the debug panel read its fields from a destructuring list that never included them
+276. Light is rebuilt lazily, so a world only pays for it when something asks for a light level
+277. The lightning flash, rain and snow overlays are all still on their own render layer
+278. Renderer gained `wind`, `cameraDistance`, `thirdPerson` and `heat` frame options
+279. The wind uniform is declared, bound and covered by the shader lint
+280. Sprite-free and dependency-free as ever: the palette, map and debug panel are plain HTML and canvas
+281. `web_shaders.mjs` still lints every shader, now including the wind uniform
+
+## v3.2 — the first big batch (commit `76f39c1`)
 
 ### World and blocks — 1-42
 

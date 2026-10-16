@@ -3,7 +3,7 @@
  * Physics values are in blocks and seconds (1 block = 1 unit), matching Minecraft's feel.
  */
 
-import { EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, PLAYER_HEIGHT, PLAYER_WIDTH, SPRINT_SPEED, WALK_SPEED, WATER } from './constants.js';
+import { EYE_HEIGHT, FLY_SPEED, GRAVITY, JUMP_SPEED, LAVA, PLAYER_HEIGHT, PLAYER_WIDTH, SPRINT_SPEED, WALK_SPEED, WATER } from './constants.js';
 
 const SWIM_GRAVITY = 7;          // sinking is slow in water
 const SWIM_UP = 3.6;             // holding jump swims upward
@@ -28,6 +28,8 @@ export class Player {
     this.landDip = 0;
     this.crouching = false;
     this.inWater = false;
+    this.inLava = false;
+    this.wading = false;
     this.headUnder = false;
     this.breath = BREATH_SECONDS;
     this.sprinting = false;
@@ -87,8 +89,14 @@ export class Player {
     }
 
     const wasInWater = this.inWater;
-    this.inWater = world.isLiquid(Math.floor(this.x), Math.floor(this.y + 0.4), Math.floor(this.z))
-      || world.isLiquid(Math.floor(this.x), Math.floor(this.y + 1.2), Math.floor(this.z));
+    // The cell the feet are *inside*: +0.1, not +0.2, or a body standing a hair below a block
+    // boundary reads the block above it — which once let players fall straight through lava.
+    const columnX = Math.floor(this.x), columnZ = Math.floor(this.z);
+    const feet = world.get(columnX, Math.floor(this.y + 0.1), columnZ);
+    const waist = world.get(columnX, Math.floor(this.y + 1.0), columnZ);
+    this.inLava = feet === LAVA || waist === LAVA;
+    this.inWater = !this.inLava && (feet === WATER || waist === WATER);
+    this.wading = !this.inLava && (feet === WATER || waist === WATER);
     this.headUnder = world.isLiquid(Math.floor(this.x), Math.floor(this.eyeY), Math.floor(this.z));
     if (this.inWater !== wasInWater) {
       this.splash = { x: this.x, y: this.y + 0.2, z: this.z, kind: this.inWater ? 'enter' : 'leave' };

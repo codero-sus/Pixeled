@@ -351,5 +351,88 @@ game2.ui.setScale(130);
 assert.equal(game2.ui.scale, 130, 'the HUD scale can be set');
 game2.ui.setBiomeReadout(true);
 
+// =============================================================== v3.3 markup and panels
+
+for (const id of ['open-palette', 'palette', 'palette-grid', 'close-palette', 'minimap', 'debug', 'hud-light']) {
+  assert.ok(byId.has(id), `index.html defines #${id}`);
+}
+assert.match(markup, /<div class="overlay modal palette hidden" id="palette" hidden>/, 'the palette starts hidden');
+assert.match(markup, /<canvas class="minimap" id="minimap"/, 'the minimap is a canvas');
+assert.match(markup, /<pre class="debug hidden" id="debug" hidden/, 'the debug panel starts hidden and empty');
+assert.match(stylesheet, /\.palette-grid\s*\{[^}]*grid-template-columns/, 'the palette lays out as a grid');
+assert.match(stylesheet, /\.minimap\s*\{[^}]*image-rendering:\s*pixelated/, 'the minimap stays crisp when scaled');
+assert.match(stylesheet, /\.debug\s*\{[^}]*font:\s*11px/, 'the debug panel uses a monospace font');
+
+// --- the palette builds one button per placeable block, with counts
+const { PALETTE, TORCH, SAPLING, STONE } = await import('../web/constants.js');
+const game3 = game;
+game3.ui.buildPalette(PALETTE, { counts: new Map([[STONE, 7]]), onPick: () => { picked++; } });
+let picked = 0;
+const grid = byId.get('palette-grid');
+assert.equal(grid.children.length, PALETTE.length, `the palette shows every placeable block (${grid.children.length})`);
+assert.equal(game3.ui.paletteButtons.size, PALETTE.length, 'and indexes them by id');
+assert.ok(grid.children.every(button => button.dataset.block), 'each button carries its block id');
+assert.equal(game3.ui.highlightPalette(TORCH), true, 'a block can be highlighted');
+assert.equal(game3.ui.paletteButtons.get(TORCH).classList.contains('active'), true, 'the torch button is marked');
+assert.equal(game3.ui.highlightPalette(SAPLING), true, 'and the highlight moves');
+assert.equal(game3.ui.paletteButtons.get(TORCH).classList.contains('active'), false, 'off the old one');
+grid.children[0].dispatch('click');
+assert.equal(picked, 1, 'clicking a block picks it');
+
+// --- opening and closing the palette through the HUD button and the game
+assert.equal(byId.get('palette').hasAttribute('hidden'), true, 'the palette starts closed');
+byId.get('open-palette').dispatch('click');
+assert.equal(byId.get('palette').hidden, false, 'the HUD button opens it');
+assert.equal(game3.input.enabled, false, 'and the controls park while it is open');
+byId.get('close-palette').dispatch('click');
+assert.equal(byId.get('palette').hidden, true, 'the Done button closes it');
+assert.equal(game3.input.enabled, true, 'and the controls come back');
+
+// --- choosing a block from the palette fills the selected slot
+game3.selectHotbar(5);
+game3.togglePalette(true);
+const torchButton = game3.ui.paletteButtons.get(TORCH);
+torchButton.dispatch('click');
+assert.equal(game3.slotBlock(), TORCH, 'the chosen block lands in the selected slot');
+assert.equal(byId.get('palette').hidden, true, 'and the palette closes behind it');
+assert.equal(byId.get('selected-block').textContent, 'Torch', 'the HUD names the block in hand');
+
+// --- the debug panel
+assert.equal(byId.get('debug').hasAttribute('hidden'), true, 'the debug panel starts hidden');
+game3.toggleDebug(true);
+assert.equal(byId.get('debug').hidden, false, 'F3 shows it');
+game3.ui.setStatus({
+  fps: 60, position: { x: 12, y: 34, z: 56 }, biome: 'plains', seed: 2408, clock: 0.4,
+  flying: false, blocksPlaced: 3, broken: 12, walked: 88.2, weather: 'clear', facing: 'east',
+  underfoot: 'Stone · light 4', breath: 1, underwater: false, chunks: 40, draws: 120,
+  light: 9, torchLight: 3, chunk: '0,3', sources: 500, tally: { broken: 12, placed: 3, distance: 88.2 }, inventory: new Map([[STONE, 4]]),
+});
+const debugText = byId.get('debug').textContent;
+assert.ok(debugText.includes('12 34 56'), `the debug panel shows the coordinates (${debugText.split('\n')[1]})`);
+assert.ok(debugText.includes('light'), 'and the light level');
+assert.ok(debugText.includes('0,3'), 'and the chunk');
+assert.equal(byId.get('hud-light').textContent, '9', 'the HUD light readout updates too');
+game3.toggleDebug(false);
+assert.equal(byId.get('debug').hidden, true, 'and it closes again');
+
+// --- the minimap
+const mapElement = byId.get('minimap');
+let painted = 0;
+mapElement.getContext = () => ({
+  fillStyle: '#000', strokeStyle: '#000', lineWidth: 1,
+  fillRect: () => { painted++; }, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+});
+const size = new Element('minimap');
+size.width = 24; size.height = 24;
+byId.set('minimap-size', size);
+mapElement.width = 24;
+const filled = game3.ui.drawMinimap(game3.world, 40, 40, 0, 32);
+assert.equal(filled, 24, 'the minimap reports the canvas size');
+assert.ok(painted > 0, 'and paints terrain pixels');
+game3.ui.setMinimapVisible(false);
+assert.equal(mapElement.hidden, true, 'the map can be hidden with the biome readout');
+game3.ui.setMinimapVisible(true);
+assert.equal(mapElement.hidden, false, 'and shown again');
+
 console.log('web DOM smoke test passed — %d ids from index.html, menu, pause, drag-look and seeds all wired'
   .replace('%d', ids.length));
