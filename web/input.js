@@ -54,13 +54,16 @@ export class Input {
       if (code === 'KeyB') { this.callbacks.togglePalette?.(); return; }
       if (code === 'F3') { event.preventDefault?.(); this.callbacks.toggleDebug?.(); return; }
       if (code === 'F5') { event.preventDefault?.(); this.callbacks.toggleCamera?.(); return; }
-      if (code === 'Escape' || !this.enabled) return;
+      // C and E are useful with a panel open too (C closes the crafting sheet, E closes a chest).
+      if (code === 'KeyC') { this.callbacks.toggleCraft?.(); return; }
+      if (code === 'Escape' || (!this.enabled && code !== 'KeyE')) return;
       if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();
       if (this.keys.has(code)) return;
       this.keys.add(code);
       if (code === 'Space') this.jumpQueued = true;
       if (code === 'KeyF') this.callbacks.toggleFly?.();
+      if (code === 'KeyE') this.callbacks.interact?.();
       if (code.startsWith('Digit')) {
         const index = Number(code.slice(5));
         if (index >= 1 && index <= 9) this.callbacks.selectHotbar?.(index - 1);

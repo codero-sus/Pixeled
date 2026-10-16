@@ -29,6 +29,7 @@ export class Player {
     this.crouching = false;
     this.inWater = false;
     this.inLava = false;
+    this.climbed = false;
     this.wading = false;
     this.headUnder = false;
     this.breath = BREATH_SECONDS;
@@ -118,6 +119,14 @@ export class Player {
       const buoyancy = this.headUnder ? SWIM_UP * (input.jump ? 1 : 0.12) : 1.4;
       this.velocityY += (buoyancy - SWIM_GRAVITY - this.velocityY) * Math.min(1, 2.2 * dt);
       if (input.jump && !this.headUnder) this.velocityY = Math.max(this.velocityY, JUMP_SPEED * 0.55);
+    } else if (this.climbing(world)) {
+      // On a ladder: hold on, climb with jump, slide down with crouch, and move at half pace.
+      this.climbed = true;
+      const climbSpeed = 3.2;
+      this.velocityX += (wishX * speed * 0.5 - this.velocityX) * Math.min(1, 18 * dt);
+      this.velocityZ += (wishZ * speed * 0.5 - this.velocityZ) * Math.min(1, 18 * dt);
+      const up = (input.jump ? 1 : 0) - (input.crouch ? 1 : 0);
+      this.velocityY = up !== 0 ? up * climbSpeed : (this.onGround ? 0 : -1.6);
     } else {
       // Snappy ground control, softer air control (Minecraft-like).
       const accel = this.onGround ? 42 : 12;
@@ -187,37 +196,62 @@ export class Player {
       this.y = ceiling - this.height - epsilon;
       this.velocityY = 0;
     } else {
-      const ground = Math.floor(this.y + 1e-3);
-      this.y = ground + 1 + epsilon;
+      // Land on whatever surface is actually there: a slab's top is half a block up, not a whole
+      // one, and a bed is two thirds of one.
+      this.y = this.groundUnder(world, this.y - dy) + epsilon;
       this.velocityY = 0;
       this.onGround = true;
     }
   }
 
+  /** Highest surface below `from` inside the player's footprint, defaulting to the world floor. */
+  groundUnder(world, from) {
+    const half = this.width / 2 - 1e-3;
+    if (typeof world.surfaceUnder === 'function') {
+      return world.surfaceUnder(this.x - half, this.z - half, this.x + half, this.z + half, from);
+    }
+    return 0;
+  }
+
   /** Walk up a single block: probe first, then commit only if the box really ends up free. */
+  /**
+   * Automatic step-up. A slab is only half a block tall, so the first attempt is a short step and
+   * the second a full block — which is what lets you walk up stairs and onto slabs without jumping.
+   */
   attemptStep(world, dx, dz) {
     if (!this.onGround) return false;
-    const probeX = this.x + Math.sign(dx) * 0.09 + dx;
-    const probeZ = this.z + Math.sign(dz) * 0.09 + dz;
-    if (this.collidesAt(world, probeX, this.y + 1.02, probeZ)) return false;
-    const previousY = this.y;
-    this.y += 1.02;
-    this.x += dx;
-    this.z += dz;
-    if (this.collides(world)) {
-      this.y = previousY;
-      this.x -= dx;
-      this.z -= dz;
-      return false;
+    for (const lift of [0.55, 1.02]) {
+      const probeX = this.x + Math.sign(dx) * 0.09 + dx;
+      const probeZ = this.z + Math.sign(dz) * 0.09 + dz;
+      if (this.collidesAt(world, probeX, this.y + lift, probeZ)) continue;
+      const previousY = this.y;
+      this.y += lift;
+      this.x += dx;
+      this.z += dz;
+      if (this.collides(world)) {
+        this.y = previousY;
+        this.x -= dx;
+        this.z -= dz;
+        continue;
+      }
+      // Settle onto the surface the step found. When the ground ahead is no higher than where we
+      // already stood, the step-up was not needed: stay at the old height and let gravity do the
+      // rest, or a walk across flat ground would climb a block per step.
+      const landed = this.groundUnder(world, previousY + lift);
+      this.y = landed > previousY ? Math.min(landed, previousY + lift) + 1e-4 : previousY;
+      return true;
     }
-    return true;
+    return false;
   }
 
   collides(world) { return this.collidesAt(world, this.x, this.y, this.z); }
 
-  /** True when the player box overlaps any solid voxel. */
+  /** True when the player box overlaps any solid voxel, partial blocks included at their height. */
   collidesAt(world, x, y, z) {
     const half = this.width / 2 - 1e-3;
+    if (typeof world.overlapsSolid === 'function') {
+      return world.overlapsSolid(x - half, y + 1e-3, z - half, x + half, y + this.height - 1e-3, z + half);
+    }
     const minX = Math.floor(x - half), maxX = Math.floor(x + half);
     const minY = Math.floor(y + 1e-3), maxY = Math.floor(y + this.height - 1e-3);
     const minZ = Math.floor(z - half), maxZ = Math.floor(z + half);
@@ -229,6 +263,22 @@ export class Player {
       }
     }
     return false;
+  }
+
+  /** On a ladder, with nothing solid in the way: the player grabs on instead of falling. */
+  climbing(world) {
+    if (this.flying || this.inWater || this.inLava) return false;
+    if (this.onGround) return false;
+    return this.onLadder(world);
+  }
+
+  /** True when a ladder is anywhere in the player's column, so they can hold on and climb. */
+  onLadder(world) {
+    if (typeof world.isLadder !== 'function') return false;
+    const x = Math.floor(this.x), z = Math.floor(this.z);
+    return world.isLadder(x, Math.floor(this.y + 0.2), z)
+      || world.isLadder(x, Math.floor(this.y + 1.2), z)
+      || world.isLadder(x, Math.floor(this.y - 0.4), z);
   }
 
   /** Solid ground is not "inside" the player, but the ground they stand on is fine. */

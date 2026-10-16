@@ -8,6 +8,7 @@
 
 import { AIR, AO_LEVELS, CHUNK, CORNER_ORDER, FACES, GRASS, LEAVES, PLANTS, SPRUCE_LEAVES, TALL_GRASS, WATER, WORLD_Y, blockById, isTransparent } from './constants.js';
 import { hashCoords } from './noise.js';
+import { shapeBoxes } from './shapes.js';
 
 /** A block lets light through: air, water or glass. */
 export function transparent(id) {
@@ -31,6 +32,10 @@ export function buildChunkMesh(world, chunkX, chunkZ) {
           continue;                                  // plants never emit box faces
         }
         const target = block.liquid || block.transparent ? water : opaque;
+        if (block.shape && block.shape !== 'cube') {
+          emitShape(target, world, block, x, y, z, baseX, baseZ);
+          continue;
+        }
         for (let f = 0; f < 6; f++) {
           const face = FACES[f];
           const neighbour = world.get(x + face.normal[0], y + face.normal[1], z + face.normal[2]);
@@ -105,9 +110,9 @@ function finish(mesh) {
   };
 }
 
-function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
+function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ, box = null) {
   const tint = 0.9 + hashCoords(x, y, z, 17) * 0.1;
-  let base = face.normal[1] > 0 ? block.top : face.normal[1] < 0 ? block.bottom : block.side;
+  let base = box?.colour ?? (face.normal[1] > 0 ? block.top : face.normal[1] < 0 ? block.bottom : block.side);
   if (block.tint && block.id !== TALL_GRASS) base = biomeTint(world, x, z, block);
   const start = mesh.positions.length / 3;
   const lights = [];
@@ -116,12 +121,20 @@ function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
   const there = cellLight(world, x + face.normal[0], y + face.normal[1], z + face.normal[2]);
   const glow = block.light > 0 ? 1 : lightCurve(Math.max(here, there));
 
+  // A sub-box (a slab, a fence post, a stair step) maps the unit face onto its own corners.
+  const boxMin = box?.min ?? [0, 0, 0];
+  const boxMax = box?.max ?? [1, 1, 1];
+  const unit = (v, axis) => boxMin[axis] + v * (boxMax[axis] - boxMin[axis]);
+
   for (let corner = 0; corner < 4; corner++) {
     const [i, j] = CORNER_ORDER[corner];
     const offsetU = i ? 1 : -1, offsetV = j ? 1 : -1;
-    const cx = x + face.origin[0] + i * face.u[0] + j * face.v[0];
-    const cy = y + face.origin[1] + i * face.u[1] + j * face.v[1];
-    const cz = z + face.origin[2] + i * face.u[2] + j * face.v[2];
+    const ux = face.origin[0] + i * face.u[0] + j * face.v[0];
+    const uy = face.origin[1] + i * face.u[1] + j * face.v[1];
+    const uz = face.origin[2] + i * face.u[2] + j * face.v[2];
+    const cx = x + unit(ux, 0);
+    const cy = y + unit(uy, 1);
+    const cz = z + unit(uz, 2);
     const ox = x + face.normal[0], oy = y + face.normal[1], oz = z + face.normal[2];
 
     const sideA = solidAt(world, cx + ox + face.u[0] * offsetU, cy + oy + face.u[1] * offsetU, cz + oz + face.u[2] * offsetU);
@@ -149,6 +162,52 @@ function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
 }
 
 /**
+ * Partial blocks: slabs, stairs, fences, panes, ladders, doors, chests and beds. The geometry lives
+ * in shapes.js so the collision code and the mesher agree on what a stair actually is.
+ */
+function emitShape(mesh, world, block, x, y, z, baseX, baseZ) {
+  const meta = typeof world.getMeta === 'function' ? world.getMeta(x, y, z) : 0;
+  const boxes = shapeBoxes(block, meta, (dx, dz) => connectsTo(world, x + dx, y, z + dz));
+  for (const shape of boxes) emitBox(mesh, world, block, x, y, z, baseX, baseZ, shape);
+}
+
+function emitBox(mesh, world, block, x, y, z, baseX, baseZ, shape) {
+  for (let f = 0; f < 6; f++) {
+    const face = FACES[f];
+    if (hiddenByNeighbour(world, block, x + face.normal[0], y + face.normal[1], z + face.normal[2], shape, face)) continue;
+    emitFace(mesh, world, block, face, x, y, z, baseX, baseZ, shape);
+  }
+}
+
+/** A face of a partial block is hidden by a neighbour only when that neighbour is a full cube. */
+function hiddenByNeighbour(world, block, nx, ny, nz, shape, face) {
+  const id = world.get(nx, ny, nz);
+  if (id === AIR) return false;
+  if (id === block.id) return false;
+  const neighbour = blockById(id);
+  if (neighbour.liquid || neighbour.transparent || neighbour.plant) return false;
+  if ((neighbour.fraction ?? 1) < 0.999) return false;      // slabs do not hide their neighbours
+  if (neighbour.shape && neighbour.shape !== 'cube') return false;
+  // Only faces that touch the shared cell boundary can be hidden by the neighbour.
+  if (face.normal[0] === 1 && shape.max[0] < 1 - 1e-6) return false;
+  if (face.normal[0] === -1 && shape.min[0] > 1e-6) return false;
+  if (face.normal[1] === 1 && shape.max[1] < 1 - 1e-6) return false;
+  if (face.normal[1] === -1 && shape.min[1] > 1e-6) return false;
+  if (face.normal[2] === 1 && shape.max[2] < 1 - 1e-6) return false;
+  if (face.normal[2] === -1 && shape.min[2] > 1e-6) return false;
+  return true;
+}
+
+/** Does a block at this cell hold a fence post or a pane edge? Full cubes do, plants and air do not. */
+function connectsTo(world, x, y, z) {
+  const id = world.get(x, y, z);
+  if (id === AIR) return false;
+  const block = blockById(id);
+  if (block.plant || block.liquid) return false;
+  return (block.fraction ?? 1) >= 0.999 || block.shape === 'fence' || block.shape === 'pane';
+}
+
+/**
  * Light level at a cell, if the world has a light engine. Anything without one (unit tests, other
  * editions) reads as full daylight, which keeps the mesher usable on its own.
  */
@@ -167,6 +226,16 @@ export function lightCurve(level) {
 }
 
 function solidAt(world, x, y, z) {
+  // Only a full opaque cube occludes a corner: a slab beside a corner must not darken the cube
+  // above it, so partial blocks are deliberately excluded here.
+  const id = world.get(Math.floor(x), Math.floor(y), Math.floor(z));
+  if (!id) return false;
+  const block = blockById(id);
+  if (block.liquid || block.transparent || block.plant) return false;
+  return (block.fraction ?? 1) >= 0.999 && (block.shape ?? 'cube') === 'cube';
+}
+
+function solidAtLegacy(world, x, y, z) {
   const id = world.get(Math.floor(x), Math.floor(y), Math.floor(z));
   return id !== AIR && !blockById(id).transparent;
 }

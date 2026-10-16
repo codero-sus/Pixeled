@@ -16,8 +16,26 @@ import {
 import { Noise, hashCoords } from './noise.js';
 import { LightEngine } from './light.js';
 import { SEA_LEVEL, WORLD_X, WORLD_Y, WORLD_Z } from './constants.js';
+import { boxesOverlap, shapeBoxes, standingHeight, tallestTop } from './shapes.js';
 
 export const BIOMES = ['plains', 'forest', 'desert', 'snow', 'savanna', 'swamp', 'mountains'];
+
+/** Turn a yaw into one of four compass quarter-turns: 0 north (-z), 1 east (+x), 2 south, 3 west. */
+export function yawToFacing(yaw = 0) {
+  const quarter = Math.round((-yaw / (Math.PI / 2)) % 4 + 4) % 4;
+  return quarter;
+}
+
+/** The quarter-turn for the wall a face normal points at, used to hang ladders. */
+export function wallFromNormal(normal) {
+  if (!normal) return 0;
+  const [nx, , nz] = normal;
+  if (nx > 0) return 3;          // looking east: the ladder hangs on the west wall of the cell
+  if (nx < 0) return 1;
+  if (nz > 0) return 0;
+  if (nz < 0) return 2;
+  return 0;
+}
 
 /** Grass colour per biome, used by the mesher so the same block reads differently per biome. */
 export const GRASS_TINTS = {
@@ -46,7 +64,13 @@ export class VoxelWorld {
     this.seed = seed >>> 0;
     this.noise = new Noise(this.seed);
     this.data = new Uint8Array(WORLD_X * WORLD_Y * WORLD_Z);
+    // A second byte per cell for things that are not the block itself: which way a door swings, which
+    // way stairs face, which ladder wall they hang on and which corner of a bed is the pillow.
+    this.meta = new Uint8Array(WORLD_X * WORLD_Y * WORLD_Z);
     this.edits = new Map();
+    this.metaEdits = new Map();
+    this.chests = new Map();          // "x,y,z" -> Map(blockId -> count)
+    this.waterQueue = [];             // cells whose neighbours get a chance to flood each tick
     this.continentMean = 0.42;
     this.calibrate();
     this.generate();
@@ -77,11 +101,146 @@ export class VoxelWorld {
     return this.get(x, y, z) === WATER;
   }
 
+  /** Cell metadata: door open state, stair facing, ladder side, bed pillow. */
+  getMeta(x, y, z) {
+    if (!this.inside(x, y, z)) return 0;
+    return this.meta[VoxelWorld.index(x, y, z)];
+  }
+
+  setMeta(x, y, z, value) {
+    if (!this.inside(x, y, z)) return false;
+    this.meta[VoxelWorld.index(x, y, z)] = value & 0xff;
+    this.metaEdits.set(`${x},${y},${z}`, value & 0xff);
+    return true;
+  }
+
+  /** A door is open when the low bit of its metadata is set. */
+  isDoorOpen(x, y, z) { return (this.getMeta(x, y, z) & 1) === 1; }
+
+  /** Flip a door — both halves — and report the new state. */
+  toggleDoor(x, y, z) {
+    const open = !this.isDoorOpen(x, y, z);
+    const base = open ? 1 : 0;
+    const facing = this.getMeta(x, y, z) & 0b110;
+    this.setMeta(x, y, z, base | facing);
+    return open;
+  }
+
+  /** Highest surface a box can stand on in a cell, or null when the cell is passable. */
+  surfaceAt(x, y, z) { return this.blockTop(x, y, z); }
+
+  /**
+   * Absolute height of the top of whatever blocks movement in a cell, or null if it is passable.
+   * For a stair this is the raised step, for a slab the half-way surface, for a bed the mattress.
+   */
+  blockTop(x, y, z) {
+    if (y < 0) return 0;
+    const boxes = this.cellBoxes(x, y, z);
+    if (!boxes) return null;
+    return y + tallestTop(boxes);
+  }
+
+  /** True when a cell stops the player walking into it at a given height. */
+  blocksMovement(x, y, z) {
+    const top = this.blockTop(x, y, z);
+    return top !== null;
+  }
+
+  /** The boxes a block occupies in its cell, or null when the cell is passable. */
+  cellBoxes(x, y, z) {
+    if (!this.inside(x, y, z)) return null;
+    const id = this.data[VoxelWorld.index(x, y, z)];
+    if (!id) return null;
+    const block = blockById(id);
+    if (!block.solid && !block.interactive) return null;
+    if (block.interactive === 'door' && this.isDoorOpen(x, y, z)) return null;
+    const meta = this.getMeta(x, y, z);
+    return shapeBoxes(block, meta, (dx, dz) => this.holdsConnector(x + dx, y, z + dz));
+  }
+
+  /** Does a cell hold something a fence post or a pane edge can attach to? */
+  holdsConnector(x, y, z) {
+    if (!this.inside(x, y, z)) return false;
+    const id = this.data[VoxelWorld.index(x, y, z)];
+    if (!id) return false;
+    const block = blockById(id);
+    if (block.plant || block.liquid) return false;
+    return (block.fraction ?? 1) >= 0.999 || block.shape === 'fence' || block.shape === 'pane';
+  }
+
+  /**
+   * True when a box overlaps anything solid. Partial blocks only occupy the boxes they actually
+   * fill, so you can walk under a stair, stand on a slab at half height, and pass an open door.
+   */
+  overlapsSolid(minX, minY, minZ, maxX, maxY, maxZ) {
+    const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-9);
+    const y0 = Math.floor(minY), y1 = Math.floor(maxY - 1e-9);
+    const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-9);
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const boxes = this.cellBoxes(x, y, z);
+          if (!boxes) continue;
+          const region = {
+            min: [minX - x, minY - y, minZ - z],
+            max: [maxX - x, maxY - y, maxZ - z],
+          };
+          for (const shape of boxes) if (boxesOverlap(shape, region)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The surface a footprint of this size stands on: the tallest box top it touches, searching down
+   * from `from`. Defaults to the world floor so nothing ever falls out of the bottom of the map.
+   */
+  surfaceUnder(minX, minZ, maxX, maxZ, from) {
+    let best = 0;
+    const startY = Math.floor(from + 1e-3);
+    for (let y = Math.min(WORLD_Y - 1, startY); y >= 0; y--) {
+      const x0 = Math.floor(minX), x1 = Math.floor(maxX - 1e-9);
+      const z0 = Math.floor(minZ), z1 = Math.floor(maxZ - 1e-9);
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const boxes = this.cellBoxes(x, y, z);
+          if (!boxes) continue;
+          const local = standingHeight(boxes,
+            Math.max(0, minX - x), Math.max(0, minZ - z),
+            Math.min(1, maxX - x), Math.min(1, maxZ - z));
+          if (local === null) continue;
+          const top = y + local;
+          if (top <= from + 1e-6 && top > best) best = top;
+        }
+      }
+      // Scanning downwards finds the highest surface first, so the first hit is the answer.
+      if (best > 0) break;
+    }
+    return best;
+  }
+
+  isLadder(x, y, z) {
+    if (!this.inside(x, y, z)) return false;
+    return blockById(this.data[VoxelWorld.index(x, y, z)]).climbable === true;
+  }
+
+  /** Chest contents at a cell, created on demand. */
+  chestAt(x, y, z, create = false) {
+    const key = `${x},${y},${z}`;
+    if (!this.chests.has(key) && create) this.chests.set(key, new Map());
+    return this.chests.get(key) ?? null;
+  }
+
   set(x, y, z, id) {
     if (!this.inside(x, y, z)) return false;
     const previous = this.data[VoxelWorld.index(x, y, z)];
     this.data[VoxelWorld.index(x, y, z)] = id;
     this.edits.set(`${x},${y},${z}`, id);
+    if (previous !== id) {
+      this.setMeta(x, y, z, 0);
+      if (blockById(previous).interactive === 'chest') this.chests.delete(`${x},${y},${z}`);
+    }
     // Once the world is built, changing a block can start a sand slide. During generation this is
     // skipped: a million queued cells would cost more than the terrain does.
     if (this.ready && previous !== id) {
@@ -89,15 +248,112 @@ export class VoxelWorld {
       if (blockById(this.get(x, y + 1, z)).falling) this.queueFalling(x, y + 1, z);
       // A torch, a lamp or a hole in the wall: repair the light right here.
       this.light?.update(x, y, z, id);
+      if (id === AIR) this.wakeWater(x, y, z);
     }
     return true;
   }
 
-  applyEdits(edits) {
+  applyEdits(edits, metaEdits = null, chests = null) {
     for (const [key, id] of edits) {
       const [x, y, z] = key.split(',').map(Number);
       if (this.inside(x, y, z)) this.data[VoxelWorld.index(x, y, z)] = id;
       this.edits.set(key, id);
+    }
+    if (metaEdits) {
+      for (const [key, value] of metaEdits) {
+        const [x, y, z] = key.split(',').map(Number);
+        if (this.inside(x, y, z)) this.meta[VoxelWorld.index(x, y, z)] = value & 0xff;
+        this.metaEdits.set(key, value & 0xff);
+      }
+    }
+    if (chests) {
+      for (const [key, contents] of Object.entries(chests)) {
+        this.chests.set(key, new Map(Object.entries(contents).map(([id, count]) => [Number(id), count])));
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ fluids
+
+  /**
+   * Water flow. Breaking a wall next to a lake should let the water in, but only a few cells per
+   * tick so a hole in the ocean floor does not stall the frame. Water spreads down first, then
+   * sideways, and stops when it has gone `limit` cells from its source.
+   */
+  flowWater({ limit = 220 } = {}) {
+    this.waterQueue ??= [];
+    if (!this.waterQueue.length) return [];
+    const wet = [];
+    let budget = limit;
+    while (this.waterQueue.length && budget-- > 0) {
+      const { x, y, z } = this.waterQueue.shift();
+      for (const [dx, dy, dz] of [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]) {
+        const nx = x + dx, ny = y + dy, nz = z + dz;
+        if (!this.inside(nx, ny, nz)) continue;
+        const id = this.get(nx, ny, nz);
+        if (id !== AIR) continue;
+        // Do not flood upward forever: only fill upward if the water is still near its source level.
+        if (dy === 1 && this.waterLevel(nx, ny, nz) > 3) continue;
+        this.set(nx, ny, nz, WATER);
+        wet.push({ x: nx, y: ny, z: nz });
+        this.waterQueue.push({ x: nx, y: ny, z: nz });
+      }
+    }
+    return wet;
+  }
+
+  /** How far above the nearest solid ground a cell is — used to stop water climbing the world. */
+  waterLevel(x, y, z) {
+    let steps = 0;
+    while (steps < 6 && this.get(x, y - 1 - steps, z) === AIR) steps++;
+    return steps;
+  }
+
+  /** Queue a cell so its neighbours get a chance to flood on the next tick. */
+  queueWater(x, y, z) {
+    this.waterQueue ??= [];
+    if (this.waterQueue.length < 4000) this.waterQueue.push({ x, y, z });
+    return this.waterQueue.length;
+  }
+
+  // ------------------------------------------------------------------ placing
+
+  /**
+   * Place a block the way a player would: stairs remember which way they face, ladders remember the
+   * wall they hang on, doors start closed, beds remember which end is the pillow.
+   */
+  placeBlock(x, y, z, id, { yaw = 0, face = null, replace = false } = {}) {
+    if (!this.inside(x, y, z)) return false;
+    const block = blockById(id);
+    if (!block.placeable && !replace) return false;
+    if (!replace && this.get(x, y, z) !== AIR) return false;
+    this.set(x, y, z, id);
+    const facing = yawToFacing(yaw);
+    switch (block.shape) {
+      case 'stairs':
+        this.setMeta(x, y, z, facing);
+        break;
+      case 'ladder':
+        // Hang on whichever wall the player is looking at, or the nearest neighbour if they are
+        // standing in the open.
+        this.setMeta(x, y, z, face === null ? facing : wallFromNormal(face));
+        break;
+      case 'door':
+        this.setMeta(x, y, z, facing & 2);      // closed, remembering which way it swings
+        break;
+      case 'bed':
+        this.setMeta(x, y, z, facing);
+        break;
+      default:
+        break;
+    }
+    return true;
+  }
+
+  /** When a block is broken next to water, tell the water to start moving. */
+  wakeWater(x, y, z) {
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
+      if (this.get(x + dx, y + dy, z + dz) === WATER) this.queueWater(x + dx, y + dy, z + dz);
     }
   }
 
@@ -458,6 +714,10 @@ export class VoxelWorld {
       if (this.get(x, y, z) !== SAPLING) { this.saplings.delete(key); continue; }
       this.saplings.delete(key);
       if (this.growTree(x, y, z)) moved.push({ x, y, z, to: y, id: 'grown' });
+    }
+    // Water that was disturbed by digging spreads a little further each tick.
+    for (const cell of this.flowWater()) {
+      moved.push({ x: cell.x, y: cell.y, z: cell.z, to: cell.y, id: WATER, wet: true });
     }
     this.age = (this.age ?? 0) + 1;
     return moved;

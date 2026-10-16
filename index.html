@@ -116,7 +116,7 @@
         <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
       </footer>
     </section>
-    <div class="menu-version">Pixeled 3D · v3.3 · 33 blocks · torches and lava</div>
+    <div class="menu-version">Pixeled 3D · v3.4 · 48 blocks · craft, build, sleep</div>
   </div>
 
   <!-- ------------------------------------------------------------- block palette -->
@@ -125,7 +125,10 @@
       <h2>Blocks</h2>
       <p class="palette-hint">Pick a block to put in the selected hotbar slot. The number is how many you have dug up.</p>
       <div class="palette-grid" id="palette-grid" role="listbox" aria-label="Placeable blocks"></div>
-      <button class="primary-button" id="close-palette" type="button">Done <span>→</span></button>
+      <div class="modal-actions">
+        <button class="ghost-button" id="palette-craft" type="button">Craft…</button>
+        <button class="primary-button" id="close-palette" type="button">Done <span>→</span></button>
+      </div>
     </section>
   </div>
 
@@ -140,7 +143,34 @@
   </div>
 
   <!-- ------------------------------------------------------------- help sheet -->
-  <div class="overlay modal hidden" id="help-modal" hidden>
+  <div class="overlay modal hidden" id="craft" hidden>
+  <div class="panel wide">
+    <h2>Crafting</h2>
+    <p class="muted">Ingredients come out of your backpack. Dig logs, stone and ore, then build something better.</p>
+    <div class="inv-row" id="craft-inventory"></div>
+    <div class="craft-list" id="craft-list"></div>
+    <div class="modal-actions">
+      <button class="button" type="button" id="close-craft">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay modal hidden" id="storage" hidden>
+  <div class="panel">
+    <h2>Chest</h2>
+    <p class="muted" id="storage-held"></p>
+    <div class="palette-grid" id="storage-grid"></div>
+    <p class="empty-note" id="storage-empty">This chest is empty.</p>
+    <div class="modal-actions">
+      <button class="button ghost" type="button" id="store-held">Store one</button>
+      <button class="button" type="button" id="close-storage">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="sleep" id="sleep" hidden></div>
+
+<div class="overlay modal hidden" id="help-modal" hidden>
     <section class="card">
       <h2>How to play</h2>
       <div class="help-grid">
