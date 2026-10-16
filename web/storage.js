@@ -19,6 +19,8 @@ export class BrowserSave {
         metaEdits: new Map(Object.entries(save.metaEdits ?? {})),
         chests: save.chests ?? {},
         inventory: save.inventory ?? null,
+        bag: save.bag ?? null,
+        spawn: save.spawn ?? null,
         player: save.player ?? null,
         selected: save.selected ?? 0,
         clock: typeof save.clock === 'number' ? save.clock : 0.42,
@@ -36,7 +38,7 @@ export class BrowserSave {
     }
   }
 
-  write({ seed, edits, player, selected, clock, weather = null, distance = null, broken = 0, placed = 0, steps = 0, mode = null, daily = null, metaEdits = null, chests = null, inventory = null }) {
+  write({ seed, edits, player, selected, clock, weather = null, distance = null, broken = 0, placed = 0, steps = 0, mode = null, daily = null, metaEdits = null, chests = null, inventory = null, bag = null, spawn = null }) {
     try {
       const payload = {
         seed,
@@ -44,6 +46,8 @@ export class BrowserSave {
         metaEdits: metaEdits ? Object.fromEntries(metaEdits) : {},
         chests: chests ?? {},
         inventory: inventory ? Object.fromEntries([...inventory].map(([id, count]) => [id, count])) : null,
+        bag: bag ? Object.fromEntries(bag) : null,
+        spawn,
         player: { x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch },
         selected,
         clock,

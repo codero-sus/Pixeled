@@ -3,10 +3,83 @@
 *(Newest batch first after the intro. Batch two continues the numbering at 194; batch three at 282.)*
 
 Numbered, and counted honestly: every line below is a discrete change that shipped in the commit next
-to it, and every one of them is covered by the test suites (`tests/web_smoke.mjs` 715 checks,
-`tests/web_dom_smoke.mjs` 219, `tests/web_shaders.mjs` 56, `tests/python_smoke.py` 25 checks, plus the
+to it, and every one of them is covered by the test suites (`tests/web_smoke.mjs` 774 checks,
+`tests/web_dom_smoke.mjs` 242, `tests/web_shaders.mjs` 56, `tests/python_smoke.py` 25 checks, plus the
 Java reference check over 24 files and 27 classes). No padding, no round numbers invented after the
-fact. Batch three runs to 528.
+fact. Batch three runs to 579.
+
+## v3.6 — food, beds and a bag to carry it in
+
+*(Continues the numbering. Batch three's third slice.)*
+
+### Things you carry but cannot place — 529-543
+
+529. `web/items.js`: a small catalogue of items that are carried but never placed
+530. Two to start with, both with a real source: apples off the leaves, berries in the grass
+531. An apple is worth two hearts, a berry one, and the catalogue says so in one field
+532. Item ids are names, not numbers, and live in their own bag — an apple can never be
+     mistaken for block 12
+533. `itemById` answers null for anything that is not food, so nothing eats a rock
+534. `itemCount`, `addItem` and `takeItem`: pure functions over a Map, like `crafting.js`
+535. An emptied stack is removed rather than left behind at zero
+536. `takeItem` never takes more than is there, and answers with what actually moved
+537. `eat` takes the bite out of the bag and answers with what it is worth, in one call
+538. Eating an unknown item and eating nothing both come back with a reason, not an exception
+539. `itemList` sorts the biggest stack first, for the HUD and the backpack
+540. `firstFood` is what `Q` reaches for: the biggest stack you are carrying
+541. Chopping leaves has its own roll for an apple, separate from the sapling roll
+542. Tall grass hides berries on a third roll, so walking through a meadow pays
+543. Both drops are seeded by the world and the cell, so the same tree gives the same apples
+
+### Eating — 544-551
+
+544. `Q` eats the first thing in the bag, and heals exactly what the catalogue promises
+545. Eating at full health is refused, with a reason — the apple stays in the bag
+546. Eating with an empty bag explains where food comes from
+547. A named item can be eaten directly (`eatSomething('berry')`), for the HUD and the tests
+548. Food heals through the same `Health.heal` every other source uses, so the counters add up
+549. A bite plays the craft sound and tells you how much health it was worth
+550. Eating is refused while dead, like every other action
+551. The first apple found is announced by a toast that says the key
+
+### The bag on screen — 552-560
+
+552. A bag chip in the HUD lists what you are carrying, `🍎 3  🫐 1`
+553. It starts hidden and stays hidden while the bag is empty
+554. Clicking the chip eats something, so a phone has a way to eat without a keyboard
+555. The chip's tooltip spells out the stacks and the key
+556. The click handler binds once, so repeated refreshes cannot stack up handlers
+557. The crafting panel's backpack line lists food next to the blocks
+558. Food chips carry their own colour, so an apple is not grey
+559. `giveItem` keeps the HUD chip in step every time the bag grows
+560. The touch layout gained USE and EAT buttons beside MINE, PLACE and JUMP
+
+### Beds as spawn points — 561-567
+
+561. Sleeping in a bed sets your spawn point, the way it should
+562. The toast says so: "Spawn point set to this bed"
+563. Respawn goes to the bed when there is one, and to the world spawn when there is not
+564. `player.spawnAt(world, point)` takes an explicit point instead of always asking the world
+565. The bed spawn is written to the save and restored with the world
+566. The bag is saved too, so the apples you were carrying are still there tomorrow
+567. An older save without either field still loads: no bag, no bed, no error
+
+### Fixes and tests for this slice — 568-579
+
+568. **Bug fixed while testing:** `main.save()` handed storage an already-plain object for the bag
+     and storage serialised it a second time, so every save threw and the game reported "This
+     browser blocked saving" — the bag now travels as a Map, exactly like the inventory
+569. The respawn test now knows about beds: it checks both the bed spawn and the world-spawn fallback
+570. The damage tests clear the mercy window explicitly, because a respawn grants one
+571. Item tests: the catalogue, the bad ids, the empty handfuls, the stack that disappears at zero
+572. Eating tests: the heal, the refusal at full health, the named item, the empty bag, the toast
+573. A live-game test chops leaves in a loop until one drops an apple, then eats it through the HUD
+574. Creative mode is asserted to shrug off lava before the same lava is used to test a berry
+575. The backpack test asserts the food chip's colour class, not just its text
+576. DOM tests for the bag chip: hidden when empty, counts when full, click eats, no double binding
+577. DOM tests for the two new touch buttons and the four new help-sheet rows
+578. `refreshBag` and `setCraftInventory` are covered for both the empty and the full case
+579. The suite stands at 1072 web assertions across the three files
 
 ## v3.5 — modes, the daily challenge and the living sea
 

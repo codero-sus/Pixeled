@@ -57,6 +57,7 @@ export class Input {
       // C and E are useful with a panel open too (C closes the crafting sheet, E closes a chest).
       if (code === 'KeyC') { this.callbacks.toggleCraft?.(); return; }
       if (code === 'KeyJ') { this.callbacks.toggleChallenges?.(); return; }
+      if (code === 'KeyQ') { this.callbacks.eat?.(); return; }
       if (code === 'Escape' || (!this.enabled && code !== 'KeyE')) return;
       if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();
@@ -205,6 +206,8 @@ export class Input {
         if (action === 'mine') { this.mining = true; this.callbacks.onDig?.(); }
         if (action === 'place') { this.placing = true; this.callbacks.onPlace?.(); }
         if (action === 'fly') this.callbacks.toggleFly?.();
+        if (action === 'use') this.callbacks.interact?.();
+        if (action === 'eat') this.callbacks.eat?.();
         button.classList.add('pressed');
       }, { passive: false });
       ['touchend', 'touchcancel'].forEach(type => button.addEventListener(type, event => {

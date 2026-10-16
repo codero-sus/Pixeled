@@ -1116,3 +1116,28 @@ body.menu-open #game { cursor: default; }
 @media (max-width: 640px) {
   .mode-row { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* v3.6 — the bag chip: food in the HUD, and a click that eats it. */
+.bag {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(12, 14, 22, 0.66);
+  color: var(--text, #eef1f7);
+  font: 600 14px/1 var(--ui-font, system-ui, sans-serif);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.bag:hover { transform: translateX(-50%) scale(1.05); background: rgba(28, 32, 46, 0.8); }
+.bag:active { transform: translateX(-50%) scale(0.97); }
+.inv-chip.food i { background: #c8402f; }
+
+@media (max-width: 560px) {
+  .bag { bottom: 118px; font-size: 12px; }
+}

@@ -1899,8 +1899,19 @@ assert.equal(live.dead, false, 'and you are alive again');
 assert.equal(live.health.points, MAX_HEALTH, 'at full health');
 assert.equal(elements.get('death').hidden, true, 'with the death screen gone');
 assert.equal(live.input.enabled, true, 'and the controls back');
-const respawnPoint = live.world.spawnPoint();
-assert.ok(Math.abs(live.player.x - respawnPoint.x) < 0.01 && Math.abs(live.player.z - respawnPoint.z) < 0.01, 'standing at the spawn point');
+// A bed you have slept in is where you wake up, so respawn goes there when there is one.
+assert.ok(live.spawnPoint, 'sleeping in the bed set a spawn point');
+const respawnPoint = live.spawnPoint;
+assert.ok(Math.abs(live.player.x - respawnPoint.x) < 0.01 && Math.abs(live.player.z - respawnPoint.z) < 0.01,
+  'you respawn at the bed you slept in');
+live.spawnPoint = null;
+live.health.invulnerable = 0;            // the respawn just granted a mercy window
+live.hurt(20, 'void');
+assert.equal(live.dead, true, 'a fall into the void kills you the second time too');
+live.respawn();
+const worldSpawn = live.world.spawnPoint();
+assert.ok(Math.abs(live.player.x - worldSpawn.x) < 0.01 && Math.abs(live.player.z - worldSpawn.z) < 0.01,
+  'and without a bed, at the world spawn');
 assert.equal(live.respawn(), false, 'respawning twice does nothing the second time');
 
 // --- and the hearts are drawn, ten of them, darkened as they empty
@@ -2244,6 +2255,119 @@ littered.applyEdits(new Map(), new Map(), {
 assert.deepEqual([...littered.chests.keys()], ['10,20,10'], 'only the real chest survives');
 assert.deepEqual([...littered.chestAt(10, 20, 10).entries()], [[5, 3]], 'with only the sane stacks in it');
 // Leaving a save written, so the next boot of the suite starts from a known world.
+live.save();
+
+// =============================================================== v3.6: food and beds
+
+// --- the item bag on its own
+const { ITEMS, itemById, itemCount, addItem, takeItem, eat, itemList, firstFood } = await import('../web/items.js');
+assert.ok(ITEMS.length >= 2, 'there is a small food catalogue');
+assert.equal(itemById('apple').heal, 4, 'an apple is worth two hearts');
+assert.equal(itemById('berry').heal, 2, 'a berry is worth one');
+assert.equal(itemById('nonsense'), null, 'and nothing else is food');
+assert.match(itemById('apple').source, /Leaves/, 'the catalogue says where it comes from');
+const bag = new Map();
+assert.equal(itemCount(bag, 'apple'), 0, 'a new bag is empty');
+assert.equal(addItem(bag, 'apple', 3), 3, 'putting three apples in works');
+assert.equal(addItem(bag, 'apple', 2), 5, 'and stacks up');
+assert.equal(addItem(bag, 'rock', 1), 0, 'but a rock is not an item');
+assert.equal(addItem(bag, 'apple', 0), 0, 'and an empty handful is refused');
+assert.equal(itemCount(bag, 'apple'), 5, 'leaving the stack exactly as it was');
+assert.equal(takeItem(bag, 'apple', 2), 2, 'two apples come back out');
+assert.equal(itemCount(bag, 'apple'), 3, 'leaving three');
+assert.equal(takeItem(bag, 'apple', 99), 3, 'asking for more than you have takes what is there');
+assert.equal(bag.has('apple'), false, 'and an empty stack is gone, not zero');
+assert.equal(takeItem(bag, 'apple', 1), 0, 'nothing left to take');
+addItem(bag, 'berry', 2);
+addItem(bag, 'apple', 4);
+assert.equal(firstFood(bag), 'apple', 'the first thing worth eating is the biggest stack');
+assert.deepEqual(itemList(bag).map(entry => entry.id), ['apple', 'berry'], 'and the list sorts the biggest stack first');
+const bite = eat(bag, 'apple');
+assert.equal(bite.ok, true, 'eating takes a bite');
+assert.equal(bite.heal, 4, 'worth four health');
+assert.equal(itemCount(bag, 'apple'), 3, 'and one apple fewer in the bag');
+assert.equal(eat(new Map(), 'apple').reason, 'none', 'with an empty bag there is nothing to eat');
+assert.equal(eat(bag, 'rock').reason, 'unknown', 'and a rock cannot be eaten');
+
+// --- dropped by the world, eaten from the HUD
+live.bag.clear();
+let leavesDropped = 0;
+for (let i = 0; i < 120 && itemCount(live.bag, 'apple') === 0; i++) {
+  const x = PAD.x + 1 + (i % 9), y = padHeight + 3, z = PAD.z + 1 + Math.floor(i / 9);
+  live.world.set(x, y, z, constants.LEAVES);
+  live.world.set(x, y + 1, z, AIR);
+  live.player.x = x + 0.5; live.player.z = z + 2.5; live.player.y = y + 1;
+  live.player.flying = true;
+  live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
+  if (!aimAt(x, y, z, 40)) continue;
+  live.input.mining = true;
+  for (let frame = 0; frame < 90 && live.world.get(x, y, z) !== AIR; frame++) stepAimed(1, live.player.yaw, live.player.pitch);
+  live.input.mining = false;
+  leavesDropped++;
+}
+assert.ok(itemCount(live.bag, 'apple') >= 1, `chopping leaves drops apples (${leavesDropped} leaves chopped)`);
+const bagChip = elements.get('bag');
+assert.equal(bagChip.hidden, false, 'the HUD bag chip appears once you are carrying food');
+assert.match(bagChip.textContent, /1/, 'and shows how many you have');
+assert.match(bagChip.title, /eat/i, 'with a hint about what it does');
+live.player.flying = false;
+live.health.points = 12;
+assert.equal(live.eatSomething(), true, 'Q eats the first thing in the bag');
+assert.equal(live.health.points, 16, 'and the health comes back');
+assert.equal(itemCount(live.bag, 'apple'), 0, 'with the apple gone');
+live.setMode('survival', { silent: true });
+live.health.points = MAX_HEALTH;
+addItem(live.bag, 'apple', 1);
+assert.equal(live.eatSomething(), false, 'eating at full health is refused');
+assert.match(elements.get('toast').textContent, /not hungry/i, 'with a reason');
+assert.equal(itemCount(live.bag, 'apple'), 1, 'and the apple is saved for later');
+addItem(live.bag, 'berry', 2);
+live.setMode('creative', { silent: true });
+live.health.invulnerable = 0;
+assert.equal(live.hurt(8, 'lava'), 0, 'creative mode shrugs lava off');
+assert.equal(live.health.points, MAX_HEALTH, 'so nothing is lost');
+live.setMode('survival', { silent: true });
+live.health.invulnerable = 0;
+live.hurt(8, 'lava');
+const hurtPoints = live.health.points;
+assert.ok(hurtPoints < MAX_HEALTH, 'back in survival, lava hurts again');
+assert.equal(live.eatSomething('berry'), true, 'a specific item can be eaten by name');
+assert.equal(live.health.points, hurtPoints + 2, 'and heals what the catalogue says');
+assert.equal(itemCount(live.bag, 'berry'), 1, 'taking one berry');
+assert.equal(live.eatSomething('berry'), true, 'a second berry goes down');
+assert.equal(itemCount(live.bag, 'berry'), 0, 'and the berries are gone');
+assert.equal(live.eatSomething(), true, 'the plain Q eats whatever is left');
+assert.equal(itemCount(live.bag, 'apple'), 0, 'which was the apple');
+assert.equal(live.eatSomething(), false, 'so there is nothing left to eat');
+assert.match(elements.get('toast').textContent, /Nothing to eat/, 'and the toast says where to look');
+live.setMode('survival', { silent: true });
+// the crafting panel lists food next to the blocks
+addItem(live.bag, 'apple', 2);
+live.refreshCraft();
+const bagChips = [...elements.get('craft-inventory').children];
+assert.ok(bagChips.some(chip => /Apple/.test(chip.innerHTML)), 'the backpack lists what you can eat');
+
+// --- a bed is a respawn point, and it survives the save
+assert.ok(live.spawnPoint, 'the bed slept in earlier is still your spawn');
+live.spawnPoint = null;
+assert.equal(live.spawnPoint, null, 'clearing it leaves no bed spawn');
+live.day.clock = 0.9;
+const bedSpot = { x: PAD.x + 3, y: padHeight + 2, z: PAD.z + 3 };
+live.world.placeBlock(bedSpot.x, bedSpot.y, bedSpot.z, constants.BED);
+live.world.set(bedSpot.x, bedSpot.y - 1, bedSpot.z, constants.STONE);
+assert.equal(live.sleep(bedSpot.x, bedSpot.y, bedSpot.z), true, 'you can sleep in the bed');
+assert.ok(live.spawnPoint, 'which sets the spawn point');
+assert.equal(Math.abs(live.spawnPoint.x - (bedSpot.x + 0.5)) < 1e-6, true, 'at the bed');
+live.finishSleep();
+live.save();
+const bedSave = JSON.parse(storage.get('pixeled-voxel-v2'));
+assert.equal(bedSave.spawn.x, bedSpot.x + 0.5, 'the bed spawn is written to the save');
+assert.ok(bedSave.bag, 'and so is the bag');
+live.saved = live.storage.load();
+live.createWorld(live.world.seed, true);
+assert.ok(live.spawnPoint, 'reloading keeps the bed spawn');
+assert.equal(Math.abs(live.spawnPoint.z - (bedSpot.z + 0.5)) < 1e-6, true, 'in the same place');
+assert.equal(itemCount(live.bag, 'apple'), 2, 'and the apples you were carrying');
 live.save();
 
 console.log(`web smoke test passed — ${game.renderer.meshes.size} chunks meshed, ${glStub.stats.draws} draw calls, water blocks: ${waterCount}`);

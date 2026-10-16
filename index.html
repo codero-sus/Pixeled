@@ -64,6 +64,7 @@
 
     <div class="hotbar" id="hotbar" role="toolbar" aria-label="Blocks"></div>
     <div class="selected" id="selected-block">Grass</div>
+    <button class="bag" id="bag" type="button" hidden aria-label="What you are carrying, click to eat"></button>
 
     <!-- touch controls, shown on phones and tablets -->
     <div class="joystick" id="joystick"><div class="joystick-knob" id="joystick-knob"></div></div>
@@ -71,6 +72,8 @@
       <button class="touch-button wide" data-touch-action="mine" type="button">MINE</button>
       <button class="touch-button wide" data-touch-action="place" type="button">PLACE</button>
       <button class="touch-button round" data-touch-action="jump" type="button">↑</button>
+      <button class="touch-button wide" data-touch-action="use" type="button">USE</button>
+      <button class="touch-button wide" data-touch-action="eat" type="button">EAT</button>
       <button class="touch-button round" data-touch-action="fly" type="button">✈</button>
     </div>
   </div>
@@ -142,7 +145,7 @@
         <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
       </footer>
     </section>
-    <div class="menu-version" id="menu-version">Pixeled 3D · v3.5 · 49 blocks · 4 modes · daily seeds · craft, build, sleep</div>
+    <div class="menu-version" id="menu-version">Pixeled 3D · v3.6 · 49 blocks · 4 modes · daily seeds · craft, sleep, eat</div>
   </div>
 
   <!-- ------------------------------------------------------------- block palette -->
@@ -239,13 +242,17 @@
         <div><kbd>F5</kbd><span>Third-person camera</span></div>
         <div><kbd>F3</kbd><span>Debug panel: coordinates, chunk, light level</span></div>
         <div><kbd>C</kbd><span>Crouch too, for laptops without a Ctrl key</span></div>
+        <div><kbd>C</kbd><span>Crafting — 19 recipes, and it says what you are missing</span></div>
+        <div><kbd>E</kbd><span>Use a door, open a chest, sleep in a bed</span></div>
+        <div><kbd>J</kbd><span>Today's challenge: three goals, everyone's seed</span></div>
+        <div><kbd>Q</kbd><span>Eat something from the bag (apples, berries)</span></div>
         <div><kbd>Esc</kbd><span>Release the mouse</span></div>
       </div>
       <p class="touch-note">On a phone or tablet: drag the screen to look, use the thumb-stick to walk, and tap the MINE, PLACE, JUMP and ✈ buttons.</p>
       <p class="note">Your world saves automatically — seed plus every block you changed. Press <b>New world</b> any time for a completely different random landscape.</p>
       <button class="primary-button" id="got-it" type="button">Let's build <span>→</span></button>
       <button class="link" id="close-help" type="button">close</button>
-      <p class="credits">Pixeled 3D · 29 block types · zero dependencies, one canvas · terrain, ores, plants and weather all rolled from the seed.</p>
+      <p class="credits">Pixeled 3D · 49 block types · zero dependencies, one canvas · terrain, ores, plants and weather all rolled from the seed.</p>
     </section>
   </div>
 </div>

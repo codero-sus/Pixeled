@@ -38,6 +38,8 @@ hold the left mouse button to mine, place blocks with the right, and build somet
 | Shapes | slabs, stairs, fences, panes, ladders, doors, chests and beds — partial blocks with real collision |
 | Building | 19 crafting recipes, a chest to store things in, and a bed to sleep the night away |
 | Health | ten hearts, fall damage, lava and drowning, regeneration, a death screen and a respawn |
+| Food | apples from leaves, berries from tall grass, and `Q` to eat one for health back |
+| Beds | sleep the night away in a bed and it becomes the point you respawn at |
 | Water flow | break a wall next to a lake and the water comes through, a few cells per tick |
 
 ## How the project is organised
@@ -91,8 +93,8 @@ python3 -m http.server 8000 # or the same thing by hand
 ```
 
 Then visit <http://localhost:8000>. Add `?seed=1234` to replay a specific world; progress is saved in
-browser local storage (`pixeled-voxel-v2` — the seed, the blocks you changed, the metadata, the chests
-and your backpack). The daily challenge and the recent-worlds shelf keep to their own small keys, so
+browser local storage (`pixeled-voxel-v2` — the seed, the blocks you changed, the metadata, the chests,
+your backpack, your food and the bed you last slept in). The daily challenge and the recent-worlds shelf keep to their own small keys, so
 clearing one never touches the other.
 
 ### The start screen
@@ -115,7 +117,7 @@ Below the buttons sits the shelf the start screen earns you:
 
 `W A S D` walk · `Space` jump · `Shift` sprint · `Ctrl` (or `C`) crouch · `Z` zoom · `F` fly ·
 hold left click to mine · right click build · middle click pick a block · `1`–`9` or the wheel choose
-one · `E` use a door, chest or bed · `C` crafting · `J` today's challenge · `B` block palette ·
+one · `E` use a door, chest or bed · `C` crafting · `J` today's challenge · `Q` eat · `B` block palette ·
 `F5` third-person camera · `F3` debug panel · `N` new random world · `T` skip time · `P` screenshot ·
 `H` help · `Esc` menu.
 
@@ -205,6 +207,13 @@ against its frame that you can walk straight through, and a torch left in a slot
 and only the recipes you can afford lit up. `E` on a chest shows its contents and moves one stack at a
 time in either direction — and a chest you break spills everything into your backpack.
 
+### Food and beds
+
+Apples come off leaves and berries hide in tall grass, both rolled from the world's seed, so the same
+tree always gives the same apples. Press `Q` — or tap the bag chip in the HUD — to eat one: two
+hearts for an apple, one for a berry, and nothing at all if you are already at full health. Sleep in
+a bed at night and it becomes your new spawn point, which is worth the six planks it costs.
+
 ### Hearts
 
 Twenty points, ten hearts, and a real reason to look before you jump. Falls over three blocks hurt,
@@ -245,8 +254,8 @@ shot.png` for a headless screenshot. Progress is saved in `~/.pixeled/world.txt`
 All three headless suites run in CI on every push (`.github/workflows/tests.yml`):
 
 ```bash
-node tests/web_smoke.mjs          # 715 checks: world, shapes, mesher, light, physics, water, crafting, health, modes, dailies, save, the live game
-node tests/web_dom_smoke.mjs      # 219 checks: boots the game against the real index.html markup, the menu, the modes and the panels
+node tests/web_smoke.mjs          # 774 checks: world, shapes, mesher, light, physics, water, crafting, health, modes, dailies, save, the live game
+node tests/web_dom_smoke.mjs      # 242 checks: boots the game against the real index.html markup, the menu, the modes and the panels
 node tests/web_shaders.mjs        # 56 checks: lints all 12 GLSL shaders without a GPU
 python3 tests/python_smoke.py     # 25 checks: noise parity, world gen, physics, renderer, HUD, save
 javac -d out java/pixeled/*.java && java -Djava.awt.headless=true -cp out pixeled.Smoke
