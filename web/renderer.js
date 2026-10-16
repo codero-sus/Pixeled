@@ -63,7 +63,7 @@ attribute vec3 aNormal;
 attribute vec3 aColor;
 uniform mat4 uViewProjection;
 uniform vec3 uChunkOffset, uCamera;
-uniform float uWater, uTime, uWaving;
+uniform float uWater, uTime, uWaving, uWind;
 varying vec3 vColor;
 varying vec3 vWorld;
 varying vec3 vNormal;
@@ -77,9 +77,10 @@ void main() {
   } else if (uWaving > 0.5) {
     // Plants: crossed quads whose vertices all carry an up-facing normal, so they sway together.
     float phase = uTime * 1.6 + world.x * 0.7 + world.z * 0.5;
-    world.x += sin(phase) * 0.055;
-    world.z += cos(phase * 0.8) * 0.04;
-    world.y += sin(phase * 1.7) * 0.012;
+    float sway = 0.055 * uWind;
+    world.x += sin(phase) * sway;
+    world.z += cos(phase * 0.8) * sway * 0.72;
+    world.y += sin(phase * 1.7) * sway * 0.22;
   }
   gl_Position = uViewProjection * vec4(world, 1.0);
   vColor = aColor;
@@ -371,11 +372,21 @@ export class Renderer {
    * @param {Array}  [frame.particles]   particle quads from the particle pool
    */
   render({ world, player, time, clock, target, fov, mineProgress = 0, held = null, weather = null,
-           submerged = 0, flash = 0, particles = null, viewDistance = null }) {
+           submerged = 0, flash = 0, particles = null, viewDistance = null,
+           wind = 1, cameraDistance = 0, heat = 0, thirdPerson = false }) {
     const gl = this.gl;
     this.resize();
     const palette = skyPalette(clock);
-    const eye = [player.x, player.eyeY + (player.eyeOffset ?? 0), player.z];
+    let eye = [player.x, player.eyeY + (player.eyeOffset ?? 0), player.z];
+    // Third person: pull the camera back along the view direction, above the player's shoulders.
+    if (cameraDistance > 0) {
+      const cp = Math.cos(player.pitch);
+      eye = [
+        eye[0] + Math.sin(player.yaw) * cp * cameraDistance,
+        eye[1] - Math.sin(player.pitch) * cameraDistance + 0.45,
+        eye[2] + Math.cos(player.yaw) * cp * cameraDistance,
+      ];
+    }
     const aspect = this.canvas.width / this.canvas.height;
 
     perspective(this.projection, fov, aspect, 0.08, 320);
@@ -397,15 +408,20 @@ export class Renderer {
     this.stats.draws = 0;
     this.stats.chunks = 0;
 
+    // Looking from behind, the near plane would clip the avatar, so draw it before the world and
+    // let the depth buffer sort the two out.
     this.drawSky(palette, eye, aspect, fov, time, forward, right, up, weather);
-    this.drawChunks(world, palette, eye, time, submerged, viewDistance);
+    this.drawChunks(world, palette, eye, time, submerged, viewDistance, wind);
+    if (thirdPerson) this.drawAvatar(player);
     if (particles && particles.length) this.drawParticles(particles);
     if (target) {
       this.drawHighlight(target);
       if (mineProgress > 0.01) this.drawCracks(target, mineProgress);
     }
-    if (held) this.drawHeld(held.block, time, held.swing ?? 0, held.bright ?? 1, palette);
+    if (held && !thirdPerson) this.drawHeld(held.block, time, held.swing ?? 0, held.bright ?? 1, palette);
     if (submerged) this.drawTint([0.09, 0.32, 0.52, 0.34 * submerged], 0);
+    // Standing in lava washes the screen orange, in proportion to how deep you are.
+    if (heat > 0.01) this.drawTint([0.95, 0.32, 0.06, Math.min(0.42, heat * 0.42)], 0);
     if (flash > 0.01) this.drawTint([0.75, 0.12, 0.12, Math.min(0.55, flash) * 0.6], 0);
     if (weather && weather.intensity > 0.02) {
       this.drawTint([0, 0, 0, 0], weather.snow ? 2 : 1, weather.intensity, time);
@@ -539,6 +555,46 @@ export class Renderer {
     gl.enable(gl.CULL_FACE);
   }
 
+  /** The player's body, for the third-person camera: a simple two-tone figure. */
+  drawAvatar(player) {
+    const gl = this.gl, program = this.handProgram;
+    gl.useProgram(program.program);
+    gl.uniformMatrix4fv(program.uniforms.uViewProjection, false, this.viewProjection);
+    gl.uniform3fv(program.uniforms.uLight, [1, 1, 1]);
+    gl.uniform1f(program.uniforms.uBright, 1);
+    gl.uniform1f(program.uniforms.uUnderwater, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.handBuffer);
+    const stride = 6 * 4;
+    gl.enableVertexAttribArray(program.attributes.aPosition);
+    gl.vertexAttribPointer(program.attributes.aPosition, 3, gl.FLOAT, false, stride, 0);
+    gl.enableVertexAttribArray(program.attributes.aNormal);
+    gl.vertexAttribPointer(program.attributes.aNormal, 3, gl.FLOAT, false, stride, 3 * 4);
+    gl.disable(gl.CULL_FACE);
+
+    // Legs, then body, then head: three unit cubes scaled and stacked, facing the player's yaw.
+    const parts = [
+      { y: 0.42, height: 0.84, colour: [0.24, 0.28, 0.45] },
+      { y: 1.18, height: 0.68, colour: [0.35, 0.6, 0.85] },
+      { y: 1.62, height: 0.42, colour: [0.85, 0.68, 0.55] },
+    ];
+    for (const part of parts) {
+      translation(this.model, player.x, player.y + part.y, player.z);
+      const cos = Math.cos(player.yaw), sin = Math.sin(player.yaw);
+      const scaleX = 0.52 * cos, scaleZ = 0.52 * -sin;
+      const matrix = this.model;
+      // Yaw rotation baked into the x/z basis, so the figure turns with the player.
+      matrix[0] = 0.52 * cos; matrix[2] = 0.52 * -sin;
+      matrix[8] = 0.34 * sin; matrix[10] = 0.34 * cos;
+      matrix[5] = part.height;
+      gl.uniformMatrix4fv(program.uniforms.uModel, false, matrix);
+      gl.uniform3fv(program.uniforms.uColor, part.colour);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+      this.stats.draws++;
+      void scaleX; void scaleZ;
+    }
+    gl.enable(gl.CULL_FACE);
+  }
+
   drawSky(palette, eye, aspect, fov, time, forward, right, up, weather = null) {
     const gl = this.gl, program = this.skyProgram;
     gl.useProgram(program.program);
@@ -572,7 +628,7 @@ export class Renderer {
     gl.enable(gl.CULL_FACE);
   }
 
-  drawChunks(world, palette, eye, time, submerged = 0, viewDistance = null) {
+  drawChunks(world, palette, eye, time, submerged = 0, viewDistance = null, wind = 1) {
     const gl = this.gl, program = this.terrainProgram;
     // Underwater the fog closes right in, which is what sells being submerged; on land the fog far
     // plane is the player's view distance, so the setting really changes how far you can see.
@@ -588,6 +644,7 @@ export class Renderer {
     gl.uniform1f(program.uniforms.uFogFar, this.fogFar);
     gl.uniform1f(program.uniforms.uTime, time);
     gl.uniform1f(program.uniforms.uWaving, 0);
+    gl.uniform1f(program.uniforms.uWind, wind);
 
     gl.disable(gl.BLEND);
     gl.depthMask(true);

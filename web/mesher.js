@@ -53,7 +53,7 @@ function emitPlant(mesh, world, block, x, y, z, baseX, baseZ) {
   const jitter = 0.92 + hashCoords(x, y, z, 23) * 0.16;
   const height = block.id === TALL_GRASS ? 0.95 : 0.75;
   const lift = hashCoords(x, y, z, 29) * 0.12;            // so a field of grass is not a grid
-  const light = 0.94 * jitter;
+  const light = 0.94 * jitter * (block.light > 0 ? 1 : lightCurve(cellLight(world, x, y, z)));
   const planes = [
     [[0.06, 0.06], [0.94, 0.94]],
     [[0.94, 0.06], [0.06, 0.94]],
@@ -111,6 +111,10 @@ function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
   if (block.tint && block.id !== TALL_GRASS) base = biomeTint(world, x, z, block);
   const start = mesh.positions.length / 3;
   const lights = [];
+  // Torches and lava light the cell a face looks into; a glowing block lights itself fully.
+  const here = cellLight(world, x, y, z);
+  const there = cellLight(world, x + face.normal[0], y + face.normal[1], z + face.normal[2]);
+  const glow = block.light > 0 ? 1 : lightCurve(Math.max(here, there));
 
   for (let corner = 0; corner < 4; corner++) {
     const [i, j] = CORNER_ORDER[corner];
@@ -127,7 +131,8 @@ function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
       cy + oy + face.u[1] * offsetU + face.v[1] * offsetV,
       cz + oz + face.u[2] * offsetU + face.v[2] * offsetV);
     const occlusion = sideA && sideB ? 3 : (sideA ? 1 : 0) + (sideB ? 1 : 0) + (diagonal ? 1 : 0);
-    const light = AO_LEVELS[occlusion] * face.shade * tint;
+    // Ambient occlusion, face shading and the light level all multiply into the vertex colour.
+    const light = AO_LEVELS[occlusion] * face.shade * tint * glow;
 
     mesh.positions.push(cx - baseX, cy, cz - baseZ);
     mesh.normals.push(face.normal[0], face.normal[1], face.normal[2]);
@@ -141,6 +146,24 @@ function emitFace(mesh, world, block, face, x, y, z, baseX, baseZ) {
   } else {
     mesh.indices.push(start + 1, start + 2, start + 3, start + 1, start + 3, start);
   }
+}
+
+/**
+ * Light level at a cell, if the world has a light engine. Anything without one (unit tests, other
+ * editions) reads as full daylight, which keeps the mesher usable on its own.
+ */
+function cellLight(world, x, y, z) {
+  if (typeof world.lightAt !== 'function') return 15;
+  return world.lightAt(Math.floor(x), Math.floor(y), Math.floor(z));
+}
+
+/**
+ * 0-15 light to a brightness multiplier. Deep darkness still keeps a little ambient light so caves
+ * read as dim rather than as a void, and the curve is soft so torchlight falls off naturally.
+ */
+export function lightCurve(level) {
+  const t = Math.max(0, Math.min(1, level / 15));
+  return 0.28 + 0.72 * Math.pow(t, 0.72);
 }
 
 function solidAt(world, x, y, z) {

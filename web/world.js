@@ -10,9 +10,11 @@
 import {
   AIR, BIRCH_LEAVES, BIRCH_LOG, CACTUS, CLAY, COAL_ORE, COBBLESTONE, DIAMOND_ORE, DIRT, FLOWER, GOLD_ORE,
   GRASS, GRAVEL, ICE, IRON_ORE, LEAVES, LOG, MOSSY_STONE, OBSIDIAN, PUMPKIN, SAND, SANDSTONE, SNOW,
-  SPRUCE_LEAVES, SPRUCE_LOG, STONE, TALL_GRASS, WATER, blockById,
+  LAVA, SAPLING, SPRUCE_LEAVES, SPRUCE_LOG, STONE, TALL_GRASS, WATER,
+  blockById,
 } from './constants.js';
 import { Noise, hashCoords } from './noise.js';
+import { LightEngine } from './light.js';
 import { SEA_LEVEL, WORLD_X, WORLD_Y, WORLD_Z } from './constants.js';
 
 export const BIOMES = ['plains', 'forest', 'desert', 'snow', 'savanna', 'swamp', 'mountains'];
@@ -48,6 +50,10 @@ export class VoxelWorld {
     this.continentMean = 0.42;
     this.calibrate();
     this.generate();
+    // The light grid is built lazily: nothing floods until the first time a mesh asks for a light
+    // level, which is exactly when the picture needs it.
+    this.light = new LightEngine(this);
+    this.light.scan();
   }
 
   static index(x, y, z) { return (y * WORLD_Z + z) * WORLD_X + x; }
@@ -73,8 +79,17 @@ export class VoxelWorld {
 
   set(x, y, z, id) {
     if (!this.inside(x, y, z)) return false;
+    const previous = this.data[VoxelWorld.index(x, y, z)];
     this.data[VoxelWorld.index(x, y, z)] = id;
     this.edits.set(`${x},${y},${z}`, id);
+    // Once the world is built, changing a block can start a sand slide. During generation this is
+    // skipped: a million queued cells would cost more than the terrain does.
+    if (this.ready && previous !== id) {
+      this.queueFalling(x, y, z);
+      if (blockById(this.get(x, y + 1, z)).falling) this.queueFalling(x, y + 1, z);
+      // A torch, a lamp or a hole in the wall: repair the light right here.
+      this.light?.update(x, y, z, id);
+    }
     return true;
   }
 
@@ -182,6 +197,8 @@ export class VoxelWorld {
             else if (!ore && id === STONE && (swampy || biome === 1) && y > height - 8
               && hashCoords(x, y * 19 + z, z, this.seed ^ 0x3d7e) < 0.08) id = MOSSY_STONE;
             else if (!ore && id !== OBSIDIAN && y > 6 && y < height - 5 && hashCoords(x, y * 7 + z, z, this.seed ^ 0x2b3c) < 0.05) id = COBBLESTONE;
+            // Lava pools deep down, and lava lining the floor of the very deepest caves.
+            else if (!ore && y < 12 && this.lavaAt(x, y, z)) id = LAVA;
             else if (!ore && y > height - 3 && this.pebbleAt(x, y, z)) id = hashCoords(x, y, z, this.seed) < 0.6 ? GRAVEL : CLAY;
           }
           data[VoxelWorld.index(x, y, z)] = id;
@@ -201,6 +218,23 @@ export class VoxelWorld {
         this.plantBoulder(x, z, height, beach, biome);
       }
     }
+    // From here on, edits simulate: sand falls, saplings grow, leaves wither.
+    this.ready = true;
+    this.fallQueue = new Set();
+    this.saplings = new Map();
+    this.age = 0;
+  }
+
+  /**
+   * Lava: a large, slow 3D blob noise that only appears below y = 12, so the deep caves have glowing
+   * pools to find (and to fall into) without the surface ever catching fire.
+   */
+  lavaAt(x, y, z) {
+    if (y > 12 || y < 2) return false;
+    const pool = this.noise.fbm3(x * 0.06 - 31.4, y * 0.12 + 9.8, z * 0.06 + 44.2, 2);
+    if (pool < 0.66) return false;
+    // Lava sits in hollows: only where there is air above it, so pools have a surface.
+    return this.get(x, y + 1, z) === AIR || y >= 12;
   }
 
   caveAt(x, y, z) {
@@ -367,6 +401,156 @@ export class VoxelWorld {
       }
     }
   }
+
+  // ------------------------------------------------------------------ world sim
+
+  /**
+   * A gravity block (sand, gravel, a pumpkin) drops until something solid stops it.
+   * @returns {number} how many blocks it fell, 0 if it stayed put
+   */
+  dropBlock(x, y, z) {
+    const id = this.get(x, y, z);
+    if (!blockById(id).falling) return 0;
+    let target = y;
+    while (target > 0 && !blockById(this.get(x, target - 1, z)).solid) target--;
+    if (target === y) return 0;
+    this.set(x, y, z, AIR);
+    this.set(x, target, z, id);
+    return y - target;
+  }
+
+  /** Gravity blocks that should be re-checked this tick (filled by set() and by digging). */
+  queueFalling(x, y, z) {
+    this.fallQueue ??= new Set();
+    this.fallQueue.add(`${x},${y},${z}`);
+  }
+
+  /** Advance one world tick of falling sand, saplings and leaf decay. */
+  worldTick(rng = Math.random) {
+    const moved = [];
+    if (this.fallQueue?.size) {
+      const queue = [...this.fallQueue];
+      this.fallQueue.clear();
+      for (const key of queue) {
+        const [x, y, z] = key.split(',').map(Number);
+        // The queued cell first, then its neighbours: breaking a support starts a whole column.
+        const cells = [[x, y, z], [x, y + 1, z], [x, y - 1, z],
+          [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1]];
+        for (const [cx, cy, cz] of cells) {
+          const id = this.get(cx, cy, cz);
+          if (!blockById(id).falling) continue;
+          const fell = this.dropBlock(cx, cy, cz);
+          if (!fell) continue;
+          moved.push({ x: cx, y: cy, z: cz, to: cy - fell, id });
+          // Anything that was resting on the block that just moved has to be re-checked as well.
+          this.queueFalling(cx, cy + 1, cz);
+          this.queueFalling(cx, cy - fell + 1, cz);
+        }
+      }
+    }
+
+    // Saplings grow up once they have been in the ground long enough.
+    this.saplings ??= new Map();
+    for (const [key, plantedAt] of [...this.saplings]) {
+      const age = (this.age ?? 0) - plantedAt;
+      if (age < 24) continue;
+      const [x, y, z] = key.split(',').map(Number);
+      if (this.get(x, y, z) !== SAPLING) { this.saplings.delete(key); continue; }
+      this.saplings.delete(key);
+      if (this.growTree(x, y, z)) moved.push({ x, y, z, to: y, id: 'grown' });
+    }
+    this.age = (this.age ?? 0) + 1;
+    return moved;
+  }
+
+  /** Turn a sapling into a proper tree, choosing the species from the biome. */
+  growTree(x, y, z) {
+    const biome = this.biomeAt(x, z);
+    if (y + 8 >= WORLD_Y) return false;
+    if (biome === 3) { this.plantSpruce(x, z, y - 1); return true; }
+    if (biome === 5) { this.plantSwampTree(x, z, y - 1); return true; }
+    this.set(x, y, z, AIR);
+    this.plantTree(x, z, y - 1, biome === 1 ? 1 : 0, false);
+    if (this.get(x, y, z) !== LOG && this.get(x, y, z) !== BIRCH_LOG) {
+      // plantTree rolls its own density; force a trunk when the roll said no.
+      const trunk = 5;
+      for (let i = 1; i <= trunk; i++) this.set(x, y - 1 + i, z, LOG);
+      this.plantCrown(x, y - 1 + trunk, z, LEAVES, 2);
+      return true;
+    }
+    return true;
+  }
+
+  /** A round crown, used when a sapling forces a tree. */
+  plantCrown(x, y, z, leaf, radius) {
+    for (let dy = -2; dy <= 1; dy++) {
+      const spread = dy <= -1 ? radius : radius - (dy + 2) * 0.6;
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (Math.hypot(dx, dz) + Math.abs(dy) * 0.35 > spread + 0.45) continue;
+          if (dx === 0 && dz === 0 && dy < 1) continue;
+          if (this.get(x + dx, y + dy, z + dz) === AIR) this.set(x + dx, y + dy, z + dz, leaf);
+        }
+      }
+    }
+  }
+
+  /** Remember a sapling so the world tick can grow it. */
+  plantSapling(x, y, z) {
+    this.saplings ??= new Map();
+    this.saplings.set(`${x},${y},${z}`, this.age ?? 0);
+    return this.saplings.size;
+  }
+
+  /**
+   * Leaf decay: when a trunk goes, any leaf that can no longer reach a log within five steps
+   * withers away. Returns the cells that were cleared.
+   */
+  decayLeaves(x, y, z, { reach = 5 } = {}) {
+    const cleared = [];
+    const seen = new Set();
+    const queue = [[x, y, z, 0]];
+    while (queue.length) {
+      const [cx, cy, cz, depth] = queue.shift();
+      if (depth > reach) continue;
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const nx = cx + dx, ny = cy + dy, nz = cz + dz;
+        const key = `${nx},${ny},${nz}`;
+        if (seen.has(key)) continue;
+        const id = this.get(nx, ny, nz);
+        if (id === LOG || id === SPRUCE_LOG || id === BIRCH_LOG) return cleared;   // still anchored
+        if (!this.isLeaf(id)) continue;
+        seen.add(key);
+        queue.push([nx, ny, nz, depth + 1]);
+      }
+    }
+    for (const key of seen) {
+      const [cx, cy, cz] = key.split(',').map(Number);
+      if (this.isLeaf(this.get(cx, cy, cz))) {
+        this.set(cx, cy, cz, AIR);
+        cleared.push({ x: cx, y: cy, z: cz });
+      }
+    }
+    return cleared;
+  }
+
+  isLeaf(id) { return id === LEAVES || id === SPRUCE_LEAVES || id === BIRCH_LEAVES; }
+
+  /** Whether a cell (or the one below) is lava, for damage and the heat haze. */
+  isLava(x, y, z) { return this.get(x, y, z) === LAVA; }
+
+  /** Light level 0-15 at a cell: the sun by day, plus whatever torches and lava are nearby. */
+  lightAt(x, y, z) {
+    return this.light ? this.light.at(Math.floor(x), Math.floor(y), Math.floor(z)) : 15;
+  }
+
+  /** Light from blocks only, ignoring the sun — used to check that torches really light a room. */
+  torchLightAt(x, y, z) {
+    return this.light ? this.light.blockLightAt(Math.floor(x), Math.floor(y), Math.floor(z)) : 0;
+  }
+
+  /** Torches and lava found in the terrain, for the debug overlay and the tests. */
+  get lightSourceCount() { return this.light ? this.light.sources.size : 0; }
 
   /** A safe, dry spot near the middle of the map for a fresh spawn. */
   spawnPoint() {

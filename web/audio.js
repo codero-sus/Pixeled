@@ -213,6 +213,34 @@ export class Audio {
 
   select() { this.blip(720, 0.045, 'sine', 0.02); }
 
+  /** Birdsong: a couple of short chirps whose pitch follows the biome. */
+  birds(biome = 'plains') {
+    const base = { forest: 2100, plains: 2400, desert: 1700, snow: 1900, savanna: 1850, swamp: 1500, mountains: 2300 }[biome] ?? 2200;
+    const chirps = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < chirps; i++) {
+      setTimeout(() => this.sweep(base * (0.9 + Math.random() * 0.3), base * (1.1 + Math.random() * 0.4), 0.09, 0.022, 'sine'), i * (110 + Math.random() * 120));
+    }
+  }
+
+  /** Crickets: a dry, fast trill that says it is night. */
+  crickets() {
+    const pitch = 3400 + Math.random() * 400;
+    for (let i = 0; i < 6; i++) {
+      setTimeout(() => this.burst({ duration: 0.045, volume: 0.016, frequency: pitch, q: 6, type: 'bandpass' }), i * 55);
+    }
+  }
+
+  /** A single drip somewhere in the dark. */
+  caveDrip() {
+    this.sweep(900 + Math.random() * 400, 240, 0.22, 0.03, 'sine');
+  }
+
+  /** Lava: a fat, low bubble that pops. */
+  lavaPop() {
+    this.sweep(160 + Math.random() * 80, 60, 0.35, 0.05, 'sine');
+    this.burst({ duration: 0.2, volume: 0.03, frequency: 320, q: 0.8, type: 'lowpass' });
+  }
+
   /** Little melodies for the menu and for a fresh world. */
   chime(notes = [523, 659, 784, 1046]) {
     notes.forEach((frequency, index) => {

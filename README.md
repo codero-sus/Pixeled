@@ -28,6 +28,9 @@ right, and build something nice.
 | Weather | clear, rain, snow and thunderstorms with lightning flashes and rolling thunder |
 | Water | semi-transparent, animated ripples, sun glints, swimming, splashes and breath |
 | Sky | gradient dome, moon disc, drifting clouds, storms that grey the sky, stars at night |
+| Light | torches and lava light the world; sealed rooms are dark, and digging a shaft lets the sun in |
+| Simulation | sand and gravel fall, saplings grow into trees, chopped trunks take their leaves with them |
+| Lava | glowing pools below y = 12 that burn, haze the screen and pop and bubble |
 | Feel | hold-to-mine with crack overlays, block particles, carried block with a swing, footsteps, sprint FOV |
 
 ## How the project is organised
@@ -94,7 +97,8 @@ and the world already turning slowly behind it as a panorama. From there you can
 
 `W A S D` walk · `Space` jump · `Shift` sprint · `Ctrl` (or `C`) crouch · `Z` zoom · `F` fly ·
 hold left click to mine · right click build · middle click pick a block · `1`–`9` or the wheel choose
-one · `N` new random world · `T` skip time · `P` screenshot · `H` help · `Esc` menu.
+one · `B` block palette · `F5` third-person camera · `F3` debug panel · `N` new random world ·
+`T` skip time · `P` screenshot · `H` help · `Esc` menu.
 
 Mining takes time: soft blocks (grass, sand, leaves, plants) come away in a tap, stone needs the
 button held for about a second, and diamond takes a little longer. A dark crack overlay grows as you
@@ -115,6 +119,22 @@ The pause menu's **Settings** chip opens a panel with six sliders (field of view
 view distance, volume, day length, HUD scale) and seven switches (view bob, held block, particles,
 weather, biome readout, adaptive view distance, reduced motion) plus a reset button. Settings are
 stored separately from the world (`pixeled-settings-v1`), so a new seed never resets how you play.
+
+### Building tools
+
+Press `B` (or the ▦ button) for the **block palette**: every placeable block with a count of how many
+you have dug up. Picking one drops it into the selected hotbar slot, and each slot remembers its own
+block. A **minimap** in the corner shows the terrain around you, shaded by height, with a wedge for
+the direction you are facing. `F5` swaps to a third-person camera, and `F3` opens a debug panel with
+your coordinates, chunk, biome, light level and frame rate.
+
+### Light and lava
+
+Torches (14 levels) and lava (12) pour light into the world, and the mesher bakes it into the
+colours — so a sealed stone room really is pitch black until you light it, a wall really does cast a
+shadow, and digging a shaft from the surface lets daylight down into the cave. Lava pools generate
+below y = 12: it glows, it bubbles, it washes the screen orange and it burns you about twice a
+second, so bridge across it or fly over it.
 
 ### Feel
 
@@ -156,8 +176,8 @@ shot.png` for a headless screenshot. Progress is saved in `~/.pixeled/world.txt`
 All three headless suites run in CI on every push (`.github/workflows/tests.yml`):
 
 ```bash
-node tests/web_smoke.mjs          # 257 checks: world, mesher, physics, particles, weather, mining, save, the live game
-node tests/web_dom_smoke.mjs      # 87 checks: boots the game against the real index.html markup and the settings panel
+node tests/web_smoke.mjs          # 349 checks: world, mesher, light, physics, particles, weather, mining, save, the live game
+node tests/web_dom_smoke.mjs      # 121 checks: boots the game against the real index.html markup and the settings panel
 node tests/web_shaders.mjs        # 47 checks: lints all 12 GLSL shaders without a GPU
 python3 tests/python_smoke.py     # 25 checks: noise parity, world gen, physics, renderer, HUD, save
 javac -d out java/pixeled/*.java && java -Djava.awt.headless=true -cp out pixeled.Smoke

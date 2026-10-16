@@ -23,6 +23,7 @@
         <div><dt>time</dt><dd id="hud-clock">—</dd></div>
         <div><dt>mode</dt><dd id="hud-mode">WALKING</dd></div>
         <div><dt>sky</dt><dd id="hud-weather">clear</dd></div>
+        <div><dt>light</dt><dd id="hud-light">15</dd></div>
         <div><dt>facing</dt><dd id="hud-facing">north</dd></div>
         <div><dt>mined</dt><dd id="hud-mined">0</dd></div>
         <div><dt>walked</dt><dd id="hud-walked">0 m</dd></div>
@@ -34,6 +35,7 @@
     </div>
 
     <div class="actions">
+      <button id="open-palette" type="button" title="Blocks (B)">▦</button>
       <button id="toggle-sound" type="button" title="Sound on or off">♪</button>
       <button id="toggle-fly" type="button" title="Fly (F)">✈</button>
       <button id="open-help" type="button" title="Controls (H)">?</button>
@@ -50,6 +52,10 @@
       <b>Click to play</b>
       <span>WASD move · Space jump · left click mine · right click build · F to fly</span>
     </div>
+
+    <canvas class="minimap" id="minimap" width="96" height="96" aria-label="Map of nearby terrain"></canvas>
+
+    <pre class="debug hidden" id="debug" hidden aria-live="off"></pre>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -110,7 +116,17 @@
         <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
       </footer>
     </section>
-    <div class="menu-version">Pixeled 3D · v3.2 · 29 blocks</div>
+    <div class="menu-version">Pixeled 3D · v3.3 · 33 blocks · torches and lava</div>
+  </div>
+
+  <!-- ------------------------------------------------------------- block palette -->
+  <div class="overlay modal palette hidden" id="palette" hidden>
+    <section class="card wide">
+      <h2>Blocks</h2>
+      <p class="palette-hint">Pick a block to put in the selected hotbar slot. The number is how many you have dug up.</p>
+      <div class="palette-grid" id="palette-grid" role="listbox" aria-label="Placeable blocks"></div>
+      <button class="primary-button" id="close-palette" type="button">Done <span>→</span></button>
+    </section>
   </div>
 
   <!-- ------------------------------------------------------------- loading screen -->
@@ -139,6 +155,9 @@
         <div><kbd>Left click</kbd><span>Hold to break — time depends on the block</span></div>
         <div><kbd>Ctrl</kbd><span>Crouch and walk slowly</span></div>
         <div><kbd>Z</kbd><span>Hold to zoom in</span></div>
+        <div><kbd>B</kbd><span>Block palette — torches, sapings, anything you have dug up</span></div>
+        <div><kbd>F5</kbd><span>Third-person camera</span></div>
+        <div><kbd>F3</kbd><span>Debug panel: coordinates, chunk, light level</span></div>
         <div><kbd>C</kbd><span>Crouch too, for laptops without a Ctrl key</span></div>
         <div><kbd>Esc</kbd><span>Release the mouse</span></div>
       </div>

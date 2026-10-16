@@ -5,7 +5,10 @@
  * input, HUD — and owns the frame loop, mining/placing rules and autosave.
  */
 
-import { AIR, BIRCH_LOG, DIAMOND_ORE, HOTBAR, LOG, REACH, SPRUCE_LOG, WATER, blockById } from './constants.js';
+import {
+  AIR, BIRCH_LOG, DIAMOND_ORE, HOTBAR, LOG, PALETTE, REACH, SAPLING, SPRUCE_LOG, TORCH,
+  blockById,
+} from './constants.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
 import { Particles } from './particles.js';
@@ -46,6 +49,16 @@ export class PixeledGame {
     this.flash = 0;              // red damage flash, 0..1
     this.tally = { broken: 0, placed: 0, steps: 0, distance: 0 };
     this.milestones = new Set();
+    this.inventory = new Map();          // block id -> how many you have dug up
+    this.slotBlocks = [...HOTBAR];       // the palette can swap what each hotbar key holds
+    this.worldTimer = 0;                 // seconds until the next world simulation tick
+    this.damage = 0;                     // lava hurts over time, not instantly
+    this.heat = 0;                       // orange haze while standing in lava
+    this.thirdPerson = false;
+    this.debug = false;
+    this.mapTimer = 0;
+    this.ambientTimer = 3;
+    this.sprintFov = this.fovSmooth ?? 0;
     this.lastFrame = performance.now();
     this.lastSave = 0;
     this.lastDig = 0;
@@ -68,6 +81,7 @@ export class PixeledGame {
       help: () => this.openHelp(),
       closeHelp: () => this.closeHelp(),
       openMenu: () => this.pause(true),
+      closePalette: () => this.togglePalette(false),
       fullscreen: () => this.toggleFullscreen(),
       toggleSound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu?.setSound(enabled); return enabled; },
       selectHotbar: index => this.selectHotbar(index),
@@ -79,6 +93,9 @@ export class PixeledGame {
       onPick: () => this.pickBlock(),
       toggleFly: () => this.toggleFly(),
       toggleHelp: () => (document.getElementById('help-modal')?.hidden ? this.openHelp() : this.closeHelp()),
+      togglePalette: () => this.togglePalette(),
+      toggleDebug: () => this.toggleDebug(),
+      toggleCamera: () => this.toggleCamera(),
       closeHelp: () => this.closeHelp(),
       onEscape: () => this.escape(),
       onKey: code => Boolean(this.menu?.onKey(code)),
@@ -118,6 +135,8 @@ export class PixeledGame {
       this.audio.blip(open ? 640 : 480, 0.05, 'triangle', 0.02);
     });
     this.ui.setBiomeReadout(this.settings.get('minimap'));
+    this.ui.setPaletteOpener(() => this.togglePalette());
+    this.ui.setMinimapVisible(this.settings.get('minimap'));
     this.ui.setScale(this.settings.get('uiScale'));
     this.fovSmooth = this.fov;
 
@@ -173,6 +192,7 @@ export class PixeledGame {
     this.input.enabled = false;
     this.input.release();
     this.ui.setHelp(false);
+    this.ui.setPalette(false);
     this.ui.loading({ show: false });
     this.menu.show(paused);
     document.getElementById('start-hint')?.classList.add('hidden');
@@ -187,7 +207,10 @@ export class PixeledGame {
       case 'dayLength': this.day.seconds = this.settings.effectiveDayLength; break;
       case 'weather': this.weather.enabled = Boolean(value); if (!value) this.audio.stopRain(); break;
       case 'particles': this.particles.clear(); break;
-      case 'minimap': this.ui.setBiomeReadout(Boolean(value)); break;
+      case 'minimap':
+        this.ui.setBiomeReadout(Boolean(value));
+        this.ui.setMinimapVisible(Boolean(value));
+        break;
       case 'uiScale': this.ui.setScale(value); break;
       case 'reducedMotion':
         if (value) this.particles.clear();
@@ -283,6 +306,36 @@ export class PixeledGame {
     if (!this.input.isTouch) this.ui.toast('Mouse capture is blocked here — drag to look', 3600);
   }
 
+  /** B opens the block palette; picking a block fills the selected hotbar slot. */
+  togglePalette(force) {
+    const open = this.ui.setPalette(force);
+    if (open) {
+      this.input.enabled = false;
+      this.input.release();
+      this.ui.buildPalette(PALETTE, {
+        counts: this.inventory,
+        onPick: id => { this.chooseBlock(id); this.ui.setPalette(false); this.input.enabled = true; },
+      });
+    } else {
+      this.input.enabled = true;
+    }
+    return open;
+  }
+
+  /** F3: the debug panel with coordinates, chunk, light levels and draw counts. */
+  toggleDebug(force) {
+    this.debug = force === undefined ? !this.debug : Boolean(force);
+    this.ui.setDebug(this.debug);
+    return this.debug;
+  }
+
+  /** F5: swap between the eyes and a camera behind the player. */
+  toggleCamera() {
+    this.thirdPerson = !this.thirdPerson;
+    this.ui.toast(this.thirdPerson ? 'Third person — F5 to go back to your eyes' : 'First person');
+    return this.thirdPerson;
+  }
+
   toggleFly() {
     this.player.flying = !this.player.flying;
     this.player.velocityY = 0;
@@ -295,9 +348,22 @@ export class PixeledGame {
     else document.exitFullscreen?.();
   }
 
+  /** Choose what block a hotbar slot holds: that is what the palette grid is for. */
+  chooseBlock(id) {
+    if (!PALETTE.includes(id)) return false;
+    this.slotBlocks[this.selected] = id;
+    this.ui.setSlotBlock(this.selected, id);
+    this.audio.select();
+    return true;
+  }
+
+  /** The block id a hotbar slot will place. */
+  slotBlock(index = this.selected) { return this.slotBlocks[index] ?? HOTBAR[index]; }
+
   selectHotbar(index) {
     this.selected = Math.max(0, Math.min(HOTBAR.length - 1, index));
     this.ui.setSelected(this.selected);
+    this.ui.highlightPalette(this.slotBlock(this.selected));
     this.audio.select();
     this.dirty = true;
   }
@@ -368,6 +434,25 @@ export class PixeledGame {
     this.audio.dig(blockId);
     this.tally.broken++;
     this.dirty = true;
+    this.inventory.set(blockId, (this.inventory.get(blockId) ?? 0) + 1);
+    // Leaves sometimes drop a sapling, which the palette can plant back into the ground.
+    const block = blockById(blockId);
+    if (block.id === SAPLING) this.inventory.set(SAPLING, (this.inventory.get(SAPLING) ?? 0) + 1);
+    else if (block.tint === 'foliage' || blockId === SAPLING) {
+      if (hash01(hit.x * 3 + hit.y, hit.z * 5 + hit.y, this.world.seed) < 0.22) {
+        this.inventory.set(SAPLING, (this.inventory.get(SAPLING) ?? 0) + 1);
+        this.ui.toast('A sapling! Plant it with the palette (B) and it will grow');
+      }
+    }
+    // A chopped trunk takes its leaves with it.
+    if ([LOG, BIRCH_LOG, SPRUCE_LOG].includes(blockId)) {
+      const cleared = this.world.decayLeaves(hit.x, hit.y, hit.z);
+      for (const cell of cleared) {
+        this.renderer.invalidate(this.world, cell.x, cell.z);
+        if (this.settings.get('particles') && this.particles) this.particles.leaves(cell.x, cell.y, cell.z, this.particleColour(blockId), 2);
+      }
+      if (cleared.length) this.renderer.invalidate(this.world, hit.x, hit.z);
+    }
     this.checkMilestones();
     if (blockId === DIAMOND_ORE) this.milestone('diamond', 'Diamond! They only sit below y=14, so dig deep');
     else if ([LOG, BIRCH_LOG, SPRUCE_LOG].includes(blockId)) this.milestone('first-log', 'Timber! Logs make planks, planks make a house');
@@ -389,7 +474,7 @@ export class PixeledGame {
     const cell = placementCell(hit);
     if (!this.world.inside(cell.x, cell.y, cell.z)) { this.ui.toast('That is outside the world'); return false; }
     if (this.world.get(cell.x, cell.y, cell.z) !== AIR) return false;
-    const id = HOTBAR[this.selected];
+    const id = this.slotBlock();
     if (this.playerOccupies(cell)) { this.ui.toast('Make a little room first'); return false; }
     this.world.set(cell.x, cell.y, cell.z, id);
     this.renderer.invalidate(this.world, cell.x, cell.z);
@@ -398,6 +483,8 @@ export class PixeledGame {
     this.dirty = true;
     this.checkMilestones();
     if (this.settings.get('particles')) this.particles.burst(cell.x, cell.y, cell.z, this.particleColour(id), 8, 0.3, 2.2);
+    if (id === SAPLING) this.world.plantSapling(cell.x, cell.y, cell.z);
+    this.inventory.set(id, Math.max(0, (this.inventory.get(id) ?? 0) - 1));
     return true;
   }
 
@@ -494,6 +581,37 @@ export class PixeledGame {
       if (this.player.splash.kind === 'enter') this.milestone('swim', 'Swimming — hold Space to rise, and watch the air bar');
     }
 
+    // ---- the world tick: falling sand, growing saplings, withering leaves ---------
+    this.worldTimer -= dt;
+    if (this.worldTimer <= 0) {
+      this.worldTimer = 0.25;
+      const events = this.world.worldTick();
+      for (const event of events) {
+        this.renderer.invalidate(this.world, event.x, event.z);
+        if (event.id === 'grown') {
+          this.audio.whoosh();
+          this.milestone('sapling-grown', 'Your sapling grew into a tree');
+        } else {
+          this.audio.digTick(event.id);
+          if (this.settings.get('particles')) this.particles.dust(event.x + 0.5, event.to, event.z + 0.5, this.particleColour(event.id));
+        }
+      }
+    }
+
+    // ---- lava hurts, slowly and visibly ----------------------------------------
+    this.heat += ((this.player.inLava ? 1 : 0) - this.heat) * Math.min(1, dt * 3);
+    if (this.player.inLava) {
+      this.damage += dt;
+      if (Math.random() < dt * 2.2) this.audio.bubble();
+      if (this.damage > 0.55) {
+        this.damage = 0;
+        this.flash = HURT_FLASH;
+        this.milestone('lava', 'Lava burns — build across it, or fly over it');
+      }
+    } else {
+      this.damage = Math.max(0, this.damage - dt * 2);
+    }
+
     // ---- breath ----------------------------------------------------------------
     if (this.player.headUnder) {
       if (Math.random() < dt * 0.5) this.audio.bubble();
@@ -543,7 +661,7 @@ export class PixeledGame {
 
     this.particles.update(dt, this.world);
     const held = this.settings.get('viewmodel')
-      ? { block: blockById(HOTBAR[this.selected]), swing: this.swing, bright: weather.intensity > 0.35 ? 0.78 : 1 }
+      ? { block: blockById(this.slotBlock()), swing: this.swing, bright: weather.intensity > 0.35 ? 0.78 : 1 }
       : null;
 
     const stats = this.renderer.render({
@@ -553,6 +671,10 @@ export class PixeledGame {
       held, weather, submerged: this.player.headUnder ? 1 : 0, flash: this.flash,
       particles: this.settings.get('particles') ? this.particles.visible() : null,
       viewDistance: this.viewDistance,
+      wind: 1 + weather.intensity * 1.6,          // storms shake the grass harder
+      cameraDistance: this.thirdPerson ? 4.6 : 0,
+      thirdPerson: this.thirdPerson,
+      heat: this.heat,
     });
 
     this.frames++;
@@ -571,6 +693,7 @@ export class PixeledGame {
       }
     }
     this.updateStatus(dt, dig, stats, biome, weather);
+    this.updateAmbient(dt, biome, weather);
 
     if (now - this.lastSave > AUTOSAVE_SECONDS * 1000 && this.dirty) this.save();
     requestAnimationFrame(next => this.frame(next));
@@ -578,11 +701,42 @@ export class PixeledGame {
 
   roundDistance(value) { return Math.round(value / 8) * 8; }
 
+  /** Ambient soundscape: birds by day, crickets at night, drips underground, lava nearby. */
+  updateAmbient(dt, biome, weather) {
+    this.ambientTimer -= dt;
+    if (this.ambientTimer > 0) return;
+    this.ambientTimer = 6 + Math.random() * 9;
+    const feet = Math.floor(this.player.y);
+    const underground = feet < this.world.surfaceHeight(Math.floor(this.player.x), Math.floor(this.player.z)) - 6;
+    const nearLava = this.world.isLava(Math.floor(this.player.x), feet - 1, Math.floor(this.player.z))
+      || this.world.isLava(Math.floor(this.player.x), feet - 2, Math.floor(this.player.z));
+    if (nearLava) { this.audio.lavaPop(); return; }
+    if (underground) { this.audio.caveDrip(); return; }
+    if (weather.intensity > 0.3) return;                       // rain drowns the wildlife out
+    if (this.day.night) this.audio.crickets();
+    else this.audio.birds(biome);
+  }
+
+  /** The block under the crosshair, plus a line of context for the HUD. */
+  targetNote(hit) {
+    if (!hit) return '';
+    const id = this.world.get(hit.x, hit.y, hit.z);
+    const block = blockById(id);
+    const light = this.world.lightAt(hit.x, hit.y + 1, hit.z);
+    return `${block.name} · light ${light}`;
+  }
+
   updateStatus(dt, hit, stats, biome, weather) {
     this.statusTimer += dt;
     if (this.statusTimer < 0.2) return;
     this.statusTimer = 0;
     const position = { x: Math.floor(this.player.x), y: Math.floor(this.player.y), z: Math.floor(this.player.z) };
+    // The minimap is redrawn a few times a second, not every frame.
+    this.mapTimer += 0.2;
+    if (this.mapTimer > 1.2 && this.settings.get('minimap')) {
+      this.mapTimer = 0;
+      this.ui.drawMinimap(this.world, position.x, position.z, this.player.yaw);
+    }
     this.ui.setStatus({
       fps: this.fps,
       position,
@@ -594,9 +748,15 @@ export class PixeledGame {
       broken: this.tally.broken,
       walked: this.tally.distance,
       tally: this.tally,
+      light: this.world.lightAt(this.player.x, this.player.y + 1, this.player.z),
+      torchLight: this.world.torchLightAt(Math.floor(this.player.x), Math.floor(this.player.y + 1), Math.floor(this.player.z)),
+      chunk: `${Math.floor(this.player.x / 16)},${Math.floor(this.player.z / 16)}`,
+      sources: this.world.lightSourceCount,
+      held: this.slotBlock(),
+      inventory: this.inventory,
       weather: weather.label,
       facing: compassName(this.player.yaw),
-      underfoot: describeTarget(this.world, hit),
+      underfoot: this.targetNote(hit),
       breath: this.player.breathRatio,
       underwater: this.player.headUnder,
       crouching: this.player.crouching,
@@ -623,6 +783,13 @@ export class PixeledGame {
     this.dirty = false;
     this.lastSave = performance.now();
   }
+}
+
+/** Deterministic 0-1 hash, so a leaf drop is reproducible for a given world and cell. */
+export function hash01(x, y, seed = 0) {
+  let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(seed | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 /** The compass point the player is facing, for the HUD. */

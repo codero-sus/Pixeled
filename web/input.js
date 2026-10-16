@@ -50,6 +50,11 @@ export class Input {
       if (this.callbacks.onKey?.(code)) return;      // the start screen owns Enter and friends
       // Help toggles work even while the controls are parked, so H can close the sheet it opened.
       if (code === 'KeyH') { this.callbacks.toggleHelp?.(); return; }
+      // The palette, the debug panel and the camera are useful even with the controls parked.
+      if (code === 'KeyB') { this.callbacks.togglePalette?.(); return; }
+      if (code === 'F3') { event.preventDefault?.(); this.callbacks.toggleDebug?.(); return; }
+      if (code === 'F5') { event.preventDefault?.(); this.callbacks.toggleCamera?.(); return; }
+      if (code === 'Escape' || !this.enabled) return;
       if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();
       if (this.keys.has(code)) return;

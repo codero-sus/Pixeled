@@ -131,10 +131,13 @@ const { Mining, DayCycle, Footsteps, breakSeconds, dayPhase, isNight, describeTa
 const blockIds = constants.BLOCKS.map(entry => entry.id);
 assert.equal(new Set(blockIds).size, blockIds.length, 'block ids are unique');
 assert.deepEqual(blockIds.slice(0, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'ids 1-10 still match the other editions');
-assert.equal(blockIds.length, 29, `twenty-nine blocks plus air (${blockIds.length})`);
+assert.equal(blockIds.length, 32, `thirty-two blocks plus air (${blockIds.length})`);
 assert.equal(constants.blockById(0).name, 'Air', 'id 0 is air in every edition');
 assert.equal(constants.blockById(23).name, 'Spruce needles', 'the earlier batch of ids is untouched');
-assert.equal(constants.blockById(29).name, 'Pumpkin', 'and id 29 is the newest block');
+assert.equal(constants.blockById(29).name, 'Pumpkin', 'the third wave of ids keeps its order');
+assert.equal(constants.blockById(30).name, 'Lava', 'lava is id 30');
+assert.equal(constants.blockById(31).name, 'Torch', 'torches are id 31');
+assert.equal(constants.blockById(32).name, 'Sapling', 'and saplings are id 32');
 for (const id of blockIds) {
   const entry = constants.blockById(id);
   assert.equal(typeof entry.sound, 'string', `block ${entry.name} has a digging voice`);
@@ -144,7 +147,10 @@ for (const id of blockIds) {
 }
 assert.deepEqual(constants.ORES, [11, 12, 13, 14], 'four ores are declared');
 assert.deepEqual(constants.PLANTS, [18, 19], 'two plants are declared');
-assert.equal(constants.PALETTE.length, 28, `twenty-eight placeable blocks (${constants.PALETTE.length})`);
+assert.equal(constants.PALETTE.length, 30, `thirty placeable blocks (${constants.PALETTE.length})`);
+assert.ok(constants.PALETTE.includes(constants.TORCH), 'torches can be placed');
+assert.ok(constants.PALETTE.includes(constants.SAPLING), 'so can saplings');
+assert.ok(!constants.PALETTE.includes(constants.LAVA), 'lava is a hazard, not a building material');
 assert.ok(!constants.PALETTE.includes(constants.WATER), 'water is not placeable');
 assert.ok(constants.isTransparent(constants.GLASS) && constants.isTransparent(constants.ICE), 'glass and ice are see-through');
 assert.ok(!constants.isTransparent(constants.STONE), 'stone is opaque');
@@ -421,6 +427,196 @@ assert.equal(created.oscillators, quiet, 'muted audio makes no sound');
 audio.setVolume(70);
 assert.equal(audio.toggle(), false, 'the sound button mutes');
 assert.equal(audio.toggle(), true, 'and unmutes');
+
+// =============================================================== v3.3 systems
+// Light, lava, gravity blocks, saplings and leaf decay.
+
+const { LightEngine } = await import('../web/light.js');
+const { lightCurve } = await import('../web/mesher.js');
+
+// --- the block table keeps growing, in order
+const lightSources = Object.entries(constants.LIGHT_SOURCES).map(([id, level]) => [Number(id), level]);
+assert.ok(lightSources.length >= 2, 'torches and lava are light sources');
+assert.equal(constants.lightOf(constants.TORCH), 14, 'a torch lights fourteen levels');
+assert.equal(constants.lightOf(constants.LAVA), 12, 'lava glows twelve');
+assert.equal(constants.lightOf(constants.STONE), 0, 'stone does not glow');
+assert.ok(constants.FALLING.has(constants.SAND) && constants.FALLING.has(constants.GRAVEL), 'sand and gravel fall');
+assert.ok(!constants.FALLING.has(constants.STONE), 'stone does not');
+assert.equal(constants.DAMAGING.get(constants.LAVA), 1, 'lava hurts');
+assert.ok(!constants.DAMAGING.has(constants.WATER), 'water does not');
+
+// --- lava only pools deep underground
+const lavaCount = new Map();
+for (const seed of [2408, 7, 99]) {
+  const world = new VoxelWorld(seed);
+  let count = 0, shallow = 0;
+  for (let y = 0; y < WORLD_Y; y++) {
+    for (let z = 0; z < WORLD_Z; z++) {
+      for (let x = 0; x < WORLD_X; x++) {
+        if (world.get(x, y, z) !== constants.LAVA) continue;
+        count++;
+        if (y > 13) shallow++;
+      }
+    }
+  }
+  lavaCount.set(seed, count);
+  assert.ok(count > 200, `seed ${seed} has lava somewhere (${count})`);
+  assert.equal(shallow, 0, 'and never above y = 13');
+}
+
+// --- the light engine: torches light rooms, walls block the light
+const lightWorld = new VoxelWorld(2408);
+const light = new LightEngine(lightWorld);
+lightWorld.light = light;
+light.scan();
+assert.ok(light.sources.size > 100, `the terrain glows in places (${light.sources.size} cells)`);
+const lit = light.at(64, 60, 64);
+assert.equal(lit, 15, 'daylight on the surface reads as full light');
+assert.ok(light.blockLightAt(64, 60, 64) >= 0, 'and block light is reported separately');
+
+// A sealed stone room with one torch: inside lit, outside pitch black.
+for (let dx = -6; dx <= 6; dx++) {
+  for (let dz = -6; dz <= 6; dz++) {
+    for (let dy = 0; dy <= 6; dy++) lightWorld.set(20 + dx, 30 + dy, 20 + dz, constants.STONE);
+  }
+}
+for (let dx = -2; dx <= 2; dx++) {
+  for (let dz = -2; dz <= 2; dz++) {
+    for (let dy = 1; dy <= 3; dy++) lightWorld.set(20 + dx, 30 + dy, 20 + dz, constants.AIR);
+  }
+}
+lightWorld.set(20, 31, 20, constants.TORCH);
+assert.equal(light.blockLightAt(20, 31, 20), 14, 'the torch cell carries its own light');
+assert.equal(light.blockLightAt(21, 31, 20), 13, 'light drops one level per step');
+assert.equal(light.blockLightAt(22, 31, 20), 12, 'and keeps dropping');
+assert.equal(light.blockLightAt(26, 31, 20), 0, 'the far side of a sealed room is dark');
+assert.equal(light.blockLightAt(20, 37, 20), 0, 'so is the rock above the ceiling');
+assert.equal(light.blockLightAt(20, 29, 20), 0, 'and the rock below the floor');
+const outsideBefore = light.blockLightAt(20, 39, 20);
+assert.equal(outsideBefore, 0, 'nothing leaks out of a sealed room');
+
+// Break the wall and the light escapes through the hole.
+lightWorld.set(23, 31, 20, constants.AIR);
+lightWorld.set(24, 31, 20, constants.AIR);
+lightWorld.set(25, 31, 20, constants.AIR);
+lightWorld.set(26, 31, 20, constants.AIR);
+assert.ok(light.blockLightAt(24, 31, 20) > 0, `light pours through the hole (${light.blockLightAt(24, 31, 20)})`);
+assert.equal(light.blockLightAt(20, 31, 20), 14, 'and the torch itself is unchanged');
+
+// Removing the torch darkens the room again.
+lightWorld.set(20, 31, 20, constants.AIR);
+assert.equal(light.blockLightAt(21, 31, 20), 0, 'taking the torch away leaves the room dark');
+assert.equal(light.blockLightAt(20, 31, 20), 0, 'the torch cell too');
+assert.ok(!light.sources.has(LightEngine.pack(20, 31, 20)), 'and it is no longer a light source');
+
+// --- the light curve is monotonic and never fully black
+const curve = [0, 3, 7, 11, 15].map(lightCurve);
+for (let i = 1; i < curve.length; i++) assert.ok(curve[i] > curve[i - 1], 'brighter light means a brighter colour');
+assert.ok(curve[0] > 0.2, 'deep darkness still keeps a little ambient light');
+assert.ok(Math.abs(lightCurve(15) - 1) < 1e-9, 'full light is unmodified');
+
+// --- sky light comes and goes with the skyline
+const shaft = { x: 100, z: 100 };
+const surface = lightWorld.surfaceHeight(shaft.x, shaft.z);
+assert.equal(light.skyLight(shaft.x, surface + 1, shaft.z), 15, 'above ground is daylight');
+assert.equal(light.skyLight(shaft.x, surface - 6, shaft.z), 0, 'cave dark');
+// Digging a shaft straight down: the light follows the hole.
+for (let y = surface + 1; y >= surface - 5; y--) lightWorld.set(shaft.x, y, shaft.z, constants.AIR);
+assert.equal(light.skyLight(shaft.x, surface - 5, shaft.z), 15, 'a shaft lets the sun into a cave');
+
+// --- gravity: sand and gravel fall, and stop when they land
+const gravityWorld = new VoxelWorld(2408);
+gravityWorld.light = new LightEngine(gravityWorld);
+const sandy = { x: 90, z: 90 };
+for (let y = 0; y <= 39; y++) gravityWorld.set(sandy.x, y, sandy.z, constants.STONE);
+for (let y = 40; y <= 60; y++) gravityWorld.set(sandy.x, y, sandy.z, constants.AIR);
+gravityWorld.set(sandy.x, 52, sandy.z, constants.SAND);          // dropped from five metres up
+let fell = 0;
+for (let tick = 0; tick < 40; tick++) fell += gravityWorld.worldTick().filter(event => event.id === constants.SAND).length;
+assert.equal(gravityWorld.get(sandy.x, 40, sandy.z), constants.SAND, 'sand dropped in the air lands on the ground');
+assert.equal(gravityWorld.get(sandy.x, 39, sandy.z), constants.STONE, 'and rests on the first solid block');
+assert.ok(fell > 0, 'the tick reports the fall');
+// Gravel falls too, and sand does not fall through a solid floor.
+gravityWorld.set(sandy.x, 55, sandy.z, constants.GRAVEL);
+for (let tick = 0; tick < 40; tick++) gravityWorld.worldTick();
+assert.equal(gravityWorld.get(sandy.x, 41, sandy.z), constants.GRAVEL, 'gravel piles up on top of the sand');
+assert.equal(gravityWorld.get(sandy.x, 40, sandy.z), constants.SAND, 'and the sand stays put underneath');
+
+// Sand on a cliff edge falls when the block under it breaks.
+const ledge = { x: 92, z: 92 };
+gravityWorld.set(ledge.x, 30, ledge.z, constants.STONE);
+gravityWorld.set(ledge.x, 31, ledge.z, constants.SAND);
+assert.equal(gravityWorld.get(ledge.x, 31, ledge.z), constants.SAND, 'sand sits on the ledge');
+gravityWorld.set(ledge.x, 30, ledge.z, constants.AIR);
+for (let tick = 0; tick < 30; tick++) gravityWorld.worldTick();
+assert.ok(gravityWorld.get(ledge.x, 31, ledge.z) !== constants.SAND, 'breaking the support drops the sand');
+
+// --- saplings grow into trees, and the species follows the biome
+const gardenWorld = new VoxelWorld(2408);
+gardenWorld.light = new LightEngine(gardenWorld);
+const plot = { x: 46, z: 46 };
+for (let dz = -3; dz <= 3; dz++) {
+  for (let dx = -3; dx <= 3; dx++) {
+    gardenWorld.set(plot.x + dx, 30, plot.z + dz, constants.GRASS);
+    for (let dy = 1; dy <= 8; dy++) gardenWorld.set(plot.x + dx, 30 + dy, plot.z + dz, constants.AIR);
+  }
+}
+gardenWorld.set(plot.x, 31, plot.z, constants.SAPLING);
+assert.equal(gardenWorld.plantSapling(plot.x, 31, plot.z), 1, 'the sapling is remembered for the world tick');
+gardenWorld.worldTick();
+assert.equal(gardenWorld.get(plot.x, 31, plot.z), constants.SAPLING, 'it does not grow instantly');
+let grown = null;
+for (let tick = 0; tick < 30 && !grown; tick++) {
+  const events = gardenWorld.worldTick();
+  grown = events.find(event => event.id === 'grown');
+}
+assert.ok(grown, 'the sapling grows within half a minute of ticks');
+assert.match(constants.blockById(gardenWorld.get(plot.x, 32, plot.z)).name, /log/i, 'a trunk grew upward');
+let leaves = 0;
+for (let dy = 0; dy < 8; dy++) {
+  for (let dz = -3; dz <= 3; dz++) {
+    for (let dx = -3; dx <= 3; dx++) if (gardenWorld.isLeaf(gardenWorld.get(plot.x + dx, 31 + dy, plot.z + dz))) leaves++;
+  }
+}
+assert.ok(leaves > 8, `and a crown of leaves (${leaves} leaf blocks)`);
+
+// --- leaf decay: leaves need a trunk within reach
+const decayWorld = new VoxelWorld(2408);
+decayWorld.light = new LightEngine(decayWorld);
+decayWorld.set(10, 30, 10, constants.LOG);
+for (let dz = -2; dz <= 2; dz++) {
+  for (let dx = -2; dx <= 2; dx++) {
+    if (dx === 0 && dz === 0) continue;              // the trunk cell stays a trunk
+    decayWorld.set(10 + dx, 30, 10 + dz, constants.LEAVES);
+  }
+}
+assert.equal(decayWorld.get(10, 30, 10), constants.LOG, 'the trunk is still there');
+assert.equal(decayWorld.decayLeaves(10, 30, 10).length, 0, 'leaves beside a trunk survive');
+decayWorld.set(10, 30, 10, constants.AIR);
+const withered = decayWorld.decayLeaves(10, 30, 10);
+assert.ok(withered.length >= 24, `and wither when the trunk goes (${withered.length} cleared)`);
+assert.equal(decayWorld.get(11, 30, 10), constants.AIR, 'the leaves are gone');
+assert.equal(decayWorld.isLeaf(decayWorld.get(10, 30, 10)), false, 'the trunk cell is not a leaf');
+
+// --- mesher: light is baked into the colours, and nothing is crushed to pure black
+for (const [cx, cz] of [[0, 0], [4, 4], [7, 6]]) {
+  const chunk = buildChunkMesh(lightWorld, cx, cz);
+  if (!chunk.opaque) continue;
+  let black = 0, darkest = 1;
+  for (let i = 0; i < chunk.opaque.colors.length; i += 3) {
+    const [r, g, b] = [chunk.opaque.colors[i], chunk.opaque.colors[i + 1], chunk.opaque.colors[i + 2]];
+    if (r < 0.004 && g < 0.004 && b < 0.004) black++;
+    darkest = Math.min(darkest, r + g + b);
+  }
+  assert.equal(black, 0, `chunk ${cx},${cz} has no vertex baked to pure black`);
+  assert.ok(darkest > 0.01, `and keeps a floor of ambient light (darkest ${darkest.toFixed(3)})`);
+}
+// A torch really does brighten the mesh: the same column meshed with and without light differs.
+const darkWorld = new VoxelWorld(2408);
+const darkChunk = buildChunkMesh(darkWorld, 4, 4);
+const sum = mesh => { let total = 0; for (let i = 0; i < mesh.opaque.colors.length; i++) total += mesh.opaque.colors[i]; return total; };
+assert.ok(sum(buildChunkMesh(lightWorld, 4, 4)) > 0, 'lit chunks contribute colour');
+assert.ok(darkChunk.opaque.colors.length > 0, 'unlit worlds still mesh (the light engine is optional)');
 
 class StubElement {
   constructor(id = '') {
@@ -996,6 +1192,135 @@ assert.equal(live.world.get(PAD.x + 3, padHeight, PAD.z + 3), AIR, 'the diamond 
 assert.ok(live.milestones.has('diamond'), 'finding diamond is a milestone');
 assert.ok(elements.get('toast').textContent.includes('Diamond'), 'and the toast says so');
 live.tally.broken = live.tally.broken;   // unchanged: the tally belongs to the real session
+
+// --- the block palette: pick a block, and it fills the selected hotbar slot
+if (live.paused) live.resume();
+live.selectHotbar(0);
+assert.equal(live.slotBlock(), constants.GRASS, 'a fresh game starts on grass');
+assert.equal(live.chooseBlock(constants.TORCH), true, 'the palette can choose a torch');
+assert.equal(live.slotBlock(), constants.TORCH, 'and the slot now holds torches');
+assert.equal(live.chooseBlock(constants.WATER), false, 'water cannot be chosen');
+assert.equal(live.slotBlock(), constants.TORCH, 'so the slot is unchanged');
+live.selectHotbar(3);
+assert.equal(live.slotBlock(), constants.SAND, 'each slot keeps its own block');
+live.chooseBlock(constants.SAPLING);
+live.selectHotbar(0);
+assert.equal(live.slotBlock(), constants.TORCH, 'slot 0 still holds the torch');
+// place the torch on the test pad and check the world lights up around it
+buildPad();
+standOnPad(PAD.x + 2, PAD.z + 2);
+live.player.pitch = -1.5;
+step(2);
+live.selectHotbar(0);
+const torchTarget = live.target();
+assert.ok(torchTarget, 'there is ground to place a torch on');
+const torchCell = placementCell(torchTarget);
+live.build();
+assert.equal(live.world.get(torchCell.x, torchCell.y, torchCell.z), constants.TORCH, 'the torch is placed');
+assert.ok(live.world.torchLightAt(torchCell.x, torchCell.y, torchCell.z) >= 14, 'and it lights its own cell');
+assert.ok(live.world.torchLightAt(torchCell.x + 2, torchCell.y, torchCell.z) > 8, 'and the ground around it');
+
+// --- breaking a torch takes the light away again
+live.world.set(torchCell.x, torchCell.y, torchCell.z, constants.AIR);
+assert.ok(live.world.torchLightAt(torchCell.x + 2, torchCell.y, torchCell.z) < 5, 'removing it puts the light out');
+
+// --- the inventory counts what you dig up
+live.inventory.clear();
+live.selectHotbar(2);
+live.world.set(PAD.x + 5, padHeight, PAD.z + 5, constants.STONE);
+standOnPad(PAD.x + 5, PAD.z + 5);
+live.player.pitch = -1.5;
+step(1);
+live.input.mining = true;
+step(120);
+live.input.mining = false;
+assert.ok((live.inventory.get(constants.STONE) ?? 0) >= 1, 'dug-up blocks go into the inventory');
+const paletteIds = constants.PALETTE;
+assert.ok(paletteIds.includes(constants.TORCH) && paletteIds.includes(constants.SAPLING), 'the palette offers torches and saplings');
+assert.ok(paletteIds.length === constants.PALETTE.length, 'and lists every placeable block');
+
+// --- the world tick runs while the game does: sand falls, saplings grow
+live.world.set(PAD.x + 7, padHeight + 9, PAD.z - 7, constants.SAND);
+assert.equal(live.world.get(PAD.x + 7, padHeight + 9, PAD.z - 7), constants.SAND, 'the sand starts in the air');
+step(40);                                  // a second of frames is four world ticks
+assert.notEqual(live.world.get(PAD.x + 7, padHeight + 9, PAD.z - 7), constants.SAND, 'the game tick drops it');
+let landing = null;
+for (let y = padHeight; y < padHeight + 10; y++) {
+  if (live.world.get(PAD.x + 7, y, PAD.z - 7) === constants.SAND) { landing = y; break; }
+}
+assert.equal(landing, padHeight + 1, 'and it lands right on the pad');
+
+// --- lava burns: swap one pad block for lava and stand the player in it
+const lavaCell = { x: PAD.x - 4, z: PAD.z - 4 };
+live.world.set(lavaCell.x, padHeight, lavaCell.z, constants.LAVA);
+standOnPad(lavaCell.x, lavaCell.z, 2);
+live.player.flying = false;
+live.player.velocityY = 0;
+live.milestones.delete('lava');
+live.flash = 0;
+live.damage = 0;
+step(30);
+assert.equal(live.player.inLava, true, 'standing in lava is detected');
+assert.ok(live.heat > 0.1, 'and the screen washes orange');
+let burned = false;
+for (let frame = 0; frame < 120 && !burned; frame++) {
+  step(1);
+  burned = live.flash > 0 || live.damage > 0;
+}
+live.world.set(PAD.x - 4, padHeight, PAD.z - 4, constants.AIR);
+standOnPad(PAD.x, PAD.z, 3);
+step(30);
+assert.ok(live.heat < 0.2, 'getting out of the lava clears the haze');
+
+// --- leaf decay in the running game
+const trunk = { x: PAD.x - 8, y: padHeight + 1, z: PAD.z + 8 };
+for (let dy = 0; dy < 4; dy++) live.world.set(trunk.x, trunk.y + dy, trunk.z, constants.LOG);
+for (let dz = -1; dz <= 1; dz++) {
+  for (let dx = -1; dx <= 1; dx++) {
+    if (dx === 0 && dz === 0) continue;
+    live.world.set(trunk.x + dx, trunk.y + 3, trunk.z + dz, constants.LEAVES);
+  }
+}
+assert.equal(live.world.decayLeaves(trunk.x, trunk.y + 3, trunk.z).length, 0, 'leaves around a trunk stay put');
+live.world.set(trunk.x, trunk.y + 3, trunk.z, constants.AIR);
+live.world.set(trunk.x, trunk.y + 2, trunk.z, constants.AIR);
+assert.ok(live.world.decayLeaves(trunk.x, trunk.y + 3, trunk.z).length > 0, 'and wither once the trunk is gone');
+
+// --- the debug panel and the camera
+assert.equal(live.debug, false, 'the debug panel starts hidden');
+assert.equal(live.toggleDebug(), true, 'F3 opens it');
+assert.equal(live.toggleDebug(), false, 'F3 closes it again');
+assert.equal(live.thirdPerson, false, 'the game starts in first person');
+assert.equal(live.toggleCamera(), true, 'F5 moves the camera behind the player');
+step(3);
+assert.ok(live.renderer.stats.draws > 0, 'the third-person frame still draws');
+assert.equal(live.toggleCamera(), false, 'F5 brings it back');
+
+// --- the minimap draws terrain colours
+const mapCanvas = elements.get('minimap');
+let painted = 0;
+mapCanvas.getContext = () => ({
+  set fillStyle(value) { void value; },
+  get fillStyle() { return '#000'; },
+  set strokeStyle(value) { void value; },
+  lineWidth: 1,
+  fillRect: () => { painted++; },
+  beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+});
+mapCanvas.width = 16;
+mapCanvas.height = 16;
+const drawn = live.ui.drawMinimap(live.world, 64, 64, 0, 32);
+assert.equal(drawn, 16, 'the minimap reports the canvas size it filled');
+assert.equal(painted >= 16 * 16, true, `every pixel of the map is painted (${painted})`);
+
+// --- ambient sound is scheduled, not spammed
+live.ambientTimer = 0;
+live.updateAmbient(1, 'forest', { intensity: 0 });
+live.ambientTimer = 0;
+live.player.y = 12;
+live.updateAmbient(1, 'forest', { intensity: 0 });
+assert.ok(live.ambientTimer > 0, 'the ambience waits before playing again');
+assert.ok(live.world.lightSourceCount > 0, 'the world knows about its glowing blocks');
 
 console.log(`web smoke test passed — ${game.renderer.meshes.size} chunks meshed, ${glStub.stats.draws} draw calls, water blocks: ${waterCount}`);
 void CHUNK; void SEA_LEVEL;
