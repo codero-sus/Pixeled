@@ -4,6 +4,54 @@ import { BLOCKS, HOTBAR, blockById } from './constants.js';
 export { HOTBAR };
 import { sunHeight } from './renderer.js';
 
+/** How many of an ingredient the inventory holds, read back out of `missingFor`'s report. */
+function missingForCheck(recipe, id, missing) {
+  const report = missing(recipe) ?? [];
+  const entry = report.find(item => item.id === id);
+  if (entry) return entry.have;
+  // Not in the missing list means there is enough of it: the recipe's own requirement is the floor.
+  const need = recipe.needs.find(([needId]) => needId === id)?.[1] ?? 0;
+  return need;
+}
+
+/** A 34px isometric cube: top face lighter, left face the block colour, right face shaded. */
+export function drawCube(context, size, block) {
+  const half = size / 2;
+  const top = rgb(block.top), side = rgb(block.side), bottom = rgb(block.bottom ?? block.side);
+  const height = size * 0.28;
+  context.beginPath();                        // top diamond
+  context.moveTo(half, 2);
+  context.lineTo(size - 2, 2 + height);
+  context.lineTo(half, 2 + height * 2);
+  context.lineTo(2, 2 + height);
+  context.closePath();
+  context.fillStyle = top;
+  context.fill();
+  context.beginPath();                        // left face
+  context.moveTo(2, 2 + height);
+  context.lineTo(half, 2 + height * 2);
+  context.lineTo(half, size - 2);
+  context.lineTo(2, size - 2 - height);
+  context.closePath();
+  context.fillStyle = side;
+  context.fill();
+  context.beginPath();                        // right face, in shade
+  context.moveTo(size - 2, 2 + height);
+  context.lineTo(half, 2 + height * 2);
+  context.lineTo(half, size - 2);
+  context.lineTo(size - 2, size - 2 - height);
+  context.closePath();
+  context.fillStyle = shadeColour(bottom, 0.76);
+  context.fill();
+  return true;
+}
+
+function shadeColour(colour, factor) {
+  const parts = String(colour).replace('#', '').match(/../g) ?? ['88', '88', '88'];
+  const scaled = parts.map(part => Math.max(0, Math.min(255, Math.round(parseInt(part, 16) * factor))));
+  return `rgb(${scaled.join(',')})`;
+}
+
 export class Ui {
   constructor(callbacks = {}) {
     this.callbacks = callbacks;
@@ -28,6 +76,10 @@ export class Ui {
     document.getElementById('copy-seed')?.addEventListener('click', () => this.copyLink());
     document.getElementById('open-palette')?.addEventListener('click', () => this.paletteOpener?.());
     document.getElementById('close-palette')?.addEventListener('click', () => this.requestClosePalette());
+    document.getElementById('close-craft')?.addEventListener('click', () => this.callbacks.closeCraft?.());
+    document.getElementById('close-storage')?.addEventListener('click', () => this.callbacks.closeStorage?.());
+    document.getElementById('store-held')?.addEventListener('click', () => this.callbacks.storeHeld?.());
+    document.getElementById('open-craft')?.addEventListener('click', () => this.callbacks.openCraft?.());
   }
 
   buildHotbar() {
@@ -74,7 +126,12 @@ export class Ui {
   setPaletteOpener(fn) { this.paletteOpener = fn; }
 
   /** The palette overlay: every placeable block, with how many you have dug up. */
-  buildPalette(ids, { counts = new Map(), onPick = () => {} } = {}) {
+  buildPalette(ids, { counts = new Map(), onPick = () => {}, onCraft = null } = {}) {
+    const craftButton = document.getElementById('palette-craft');
+    if (craftButton) {
+      craftButton.hidden = !onCraft;
+      craftButton.onclick = onCraft ? () => onCraft() : null;
+    }
     const grid = document.getElementById('palette-grid');
     if (!grid) return 0;
     grid.replaceChildren();
@@ -95,6 +152,20 @@ export class Ui {
       this.paletteButtons.set(id, button);
     }
     return ids.length;
+  }
+
+  /** Refresh just the counts on the palette buttons, without rebuilding the grid. */
+  refreshPaletteCounts(counts = new Map()) {
+    if (!this.paletteButtons) return 0;
+    let updated = 0;
+    for (const [id, button] of this.paletteButtons) {
+      const label = button.querySelector('.palette-count');
+      if (!label) continue;
+      const count = counts.get(id) ?? 0;
+      const text = count > 0 ? String(count) : '';
+      if (label.textContent !== text) { label.textContent = text; updated++; }
+    }
+    return updated;
   }
 
   highlightPalette(id) {
@@ -129,6 +200,162 @@ export class Ui {
   setDebugText(lines) {
     const panel = document.getElementById('debug');
     if (panel && !panel.hidden) panel.textContent = lines;
+  }
+
+  // ------------------------------------------------------------------ crafting
+
+  /**
+   * The recipe book: every recipe with its ingredients, the ones you can afford highlighted.
+   * Ingredient rows show how many you have, so the panel doubles as a shopping list.
+   */
+  buildCraft(recipes, { canCraft = () => false, missing = () => [], onCraft = () => {} } = {}) {
+    const list = document.getElementById('craft-list');
+    if (!list) return 0;
+    list.replaceChildren();
+    this.craftButtons = new Map();
+    let affordable = 0;
+    for (const recipe of recipes) {
+      const out = blockById(recipe.out);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'craft-row';
+      row.dataset.out = String(recipe.out);
+      const ok = canCraft(recipe);
+      if (ok) affordable++;
+      row.classList.toggle('affordable', ok);
+      const needs = recipe.needs
+        .map(([id, need]) => {
+          const have = missingForCheck(recipe, id, missing);
+          const short = have < need;
+          return `<span class="craft-need${short ? ' short' : ''}"><i style="background:${rgb(blockById(id).side)}"></i>`
+            + `${blockById(id).name} <b>${have}</b>/${need}</span>`;
+        })
+        .join('');
+      row.innerHTML = `<span class="slot-block" style="--block-top:${rgb(out.top)};--block-side:${rgb(out.side)}"></span>`
+        + `<span class="craft-text"><b>${recipe.label}</b><small>${recipe.count > 1 ? `makes ${recipe.count}` : 'makes one'}</small></span>`
+        + `<span class="craft-needs">${needs}</span>`;
+      row.addEventListener('click', () => onCraft(recipe));
+      list.append(row);
+      this.craftButtons.set(recipe.out, row);
+    }
+    this.lastCraftable = affordable;
+    return recipes.length;
+  }
+
+  setCraft(open) {
+    const overlay = document.getElementById('craft');
+    if (!overlay) return false;
+    const show = open === undefined ? Boolean(overlay.hidden) : Boolean(open);
+    overlay.hidden = !show;
+    overlay.classList.toggle('hidden', !show);
+    return show;
+  }
+
+  /** A one-line summary of the backpack, listed at the top of the crafting panel. */
+  setCraftInventory(inventory = new Map(), limit = 14) {
+    const element = document.getElementById('craft-inventory');
+    if (!element) return 0;
+    const entries = [...inventory.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) { element.textContent = 'Your backpack is empty — go and dig something'; return 0; }
+    element.replaceChildren();
+    for (const [id, count] of entries.slice(0, limit)) {
+      const chip = document.createElement('span');
+      chip.className = 'inv-chip';
+      chip.innerHTML = `<i style="background:${rgb(blockById(id).side)}"></i>${blockById(id).name} <b>${count}</b>`;
+      element.append(chip);
+    }
+    return Math.min(entries.length, limit);
+  }
+
+  // ------------------------------------------------------------------ storage
+
+  /** The contents of an open chest, with a take-one button per stack. */
+  buildStorage(contents, heldCount = 0, { onTake = null } = {}) {
+    onTake ??= id => this.callbacks.takeFromStorage?.(id);
+    const grid = document.getElementById('storage-grid');
+    if (!grid) return 0;
+    grid.replaceChildren();
+    this.storageButtons = new Map();
+    const entries = contents instanceof Map ? [...contents.entries()].filter(([, count]) => count > 0) : [];
+    for (const [id, count] of entries) {
+      const block = blockById(id);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'palette-slot';
+      button.dataset.block = String(id);
+      button.setAttribute('aria-label', `${block.name} (${count})`);
+      button.innerHTML = `<span class="slot-block" style="--block-top:${rgb(block.top)};--block-side:${rgb(block.side)}"></span>`
+        + `<span class="palette-name">${block.name}</span><span class="palette-count">${count}</span>`;
+      button.addEventListener('click', () => onTake(id));
+      grid.append(button);
+      this.storageButtons.set(id, button);
+    }
+    const held = document.getElementById('storage-held');
+    if (held) held.textContent = heldCount > 1 ? `${heldCount} in the stack` : heldCount === 1 ? 'one in the stack' : 'nothing in the selected slot';
+    const empty = document.getElementById('storage-empty');
+    if (empty) empty.hidden = entries.length > 0;
+    return entries.length;
+  }
+
+  setStorage(open) {
+    const overlay = document.getElementById('storage');
+    if (!overlay) return false;
+    const show = Boolean(open);
+    overlay.hidden = !show;
+    overlay.classList.toggle('hidden', !show);
+    return show;
+  }
+
+  // ------------------------------------------------------------------ sleeping
+
+  /** The black fade that swallows the screen while the night passes. */
+  setSleep(active) {
+    const overlay = document.getElementById('sleep');
+    if (!overlay) return false;
+    overlay.hidden = !active;
+    overlay.classList.toggle('hidden', !active);
+    overlay.style.opacity = active ? '1' : '0';
+    return Boolean(active);
+  }
+
+  setSleepProgress(remaining) {
+    const overlay = document.getElementById('sleep');
+    if (!overlay) return 0;
+    const progress = Math.max(0, Math.min(1, 1 - remaining));
+    overlay.style.opacity = String(Math.min(1, progress * 3));
+    return progress;
+  }
+
+  // ------------------------------------------------------------------ hotbar
+
+  /**
+   * Draw a little isometric cube for each hotbar slot on its own canvas, so the HUD shows the
+   * actual blocks instead of a colour chip. Three faces, two shades, no images.
+   */
+  drawHotbarIcons(container = document.getElementById('hotbar'), slotBlocks = []) {
+    if (!container) return 0;
+    const slots = [...container.children];
+    let drawn = 0;
+    for (let index = 0; index < slots.length; index++) {
+      const slot = slots[index];
+      const id = slotBlocks[index];
+      const block = id === undefined ? null : blockById(id);
+      let canvas = slot.querySelector('canvas.slot-cube');
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.className = 'slot-cube';
+        canvas.width = 34;
+        canvas.height = 34;
+        slot.prepend(canvas);
+      }
+      const context = canvas.getContext?.('2d');
+      if (!context) continue;
+      context.clearRect(0, 0, 34, 34);
+      if (!block) continue;
+      drawCube(context, 34, block);
+      drawn++;
+    }
+    return drawn;
   }
 
   setMinimapVisible(visible) {

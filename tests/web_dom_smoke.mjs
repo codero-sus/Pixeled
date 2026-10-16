@@ -66,6 +66,28 @@ class Element {
     return this;
   }
   append(...nodes) { this.children.push(...nodes); }
+  prepend(...nodes) { this.children.unshift(...nodes); }
+  querySelectorAll(selector) {
+    // Enough of a selector engine for the two cases the UI uses: a class, or a tag plus a class.
+    const [tag, klass] = selector.includes('.') ? selector.split('.') : [selector, null];
+    return this.children.flatMap(child => {
+      const matches = (!tag || child.tagName?.toLowerCase() === tag.toLowerCase())
+        && (!klass || child.classList?.contains(klass));
+      if (matches) return [child];
+      return child.querySelectorAll ? child.querySelectorAll(selector) : [];
+    });
+  }
+  getContext(type) {
+    if (type !== '2d') return null;
+    if (!this.ctx2d) {
+      this.ctx2d = {
+        fillCalls: 0, fillStyle: '', strokeStyle: '', lineWidth: 1,
+        clearRect() {}, beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {},
+        fill() { this.fillCalls++; }, stroke() {}, fillRect() {},
+      };
+    }
+    return this.ctx2d;
+  }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(name, value) { this.attributeNames.add(name); this[name] = value; }
   removeAttribute(name) { this.attributeNames.delete(name); }
@@ -433,6 +455,92 @@ game3.ui.setMinimapVisible(false);
 assert.equal(mapElement.hidden, true, 'the map can be hidden with the biome readout');
 game3.ui.setMinimapVisible(true);
 assert.equal(mapElement.hidden, false, 'and shown again');
+
+// =============================================================== v3.4 panels
+
+for (const id of ['craft', 'craft-list', 'craft-inventory', 'close-craft', 'storage', 'storage-grid',
+  'storage-empty', 'storage-held', 'store-held', 'close-storage', 'sleep', 'palette-craft']) {
+  assert.ok(byId.has(id), `index.html defines #${id}`);
+}
+assert.match(markup, /<div class="overlay modal hidden" id="craft" hidden>/, 'the crafting panel starts hidden');
+assert.match(markup, /<div class="sleep" id="sleep" hidden><\/div>/, 'the sleep fade starts hidden');
+assert.match(stylesheet, /\.craft-row\s*\{[^}]*grid-template-columns/, 'recipe rows lay out as a grid');
+assert.match(stylesheet, /\.craft-row\.affordable\s*\{[^}]*border-color/, 'affordable recipes stand out');
+assert.match(stylesheet, /\.sleep\s*\{[^}]*inset:\s*0/, 'the sleep fade covers the screen');
+assert.match(stylesheet, /\.craft-need\.short\s*\{[^}]*color/, 'missing ingredients are called out');
+
+// --- the recipe book
+const craftUi = game.ui;
+const { RECIPES, PLANKS, LOG, TORCH: TORCH2, STONE: STONE2 } = await import('../web/constants.js');
+let crafted = [];
+craftUi.buildCraft(RECIPES, {
+  canCraft: recipe => recipe.out === PLANKS,
+  missing: recipe => recipe.needs.map(([id, need]) => ({ id, need, have: id === LOG ? 2 : 0 })),
+  onCraft: recipe => crafted.push(recipe.out),
+});
+const craftList = byId.get('craft-list');
+assert.equal(craftList.children.length, RECIPES.length, `one row per recipe (${craftList.children.length})`);
+assert.equal(craftUi.lastCraftable, 1, 'exactly one recipe is affordable in this story');
+const plankRow = craftUi.craftButtons.get(PLANKS);
+assert.equal(plankRow.classList.contains('affordable'), true, 'the plank row is highlighted');
+assert.equal(craftUi.craftButtons.get(TORCH2).classList.contains('affordable'), false, 'the torch row is not');
+assert.match(plankRow.innerHTML, /Oak planks/, 'the row names what it makes');
+assert.equal(craftList.children.filter(row => row.innerHTML.includes('short')).length, RECIPES.length - 1, 'every unaffordable recipe shows a short ingredient');
+plankRow.dispatch('click');
+assert.deepEqual(crafted, [PLANKS], 'clicking a recipe crafts it');
+
+// --- the backpack summary
+const inv = new Map([[STONE2, 12], [LOG, 3], [PLANKS, 1]]);
+assert.equal(craftUi.setCraftInventory(inv), 3, 'three stacks are listed');
+assert.equal(byId.get('craft-inventory').children.length, 3, 'as three chips');
+assert.match(byId.get('craft-inventory').children[0].innerHTML, /Stone <b>12<\/b>/, 'sorted by how many you have');
+assert.equal(craftUi.setCraftInventory(new Map()), 0, 'an empty bag says so');
+assert.match(byId.get('craft-inventory').textContent, /empty/, 'with a nudge to go digging');
+
+// --- opening and closing through the game
+assert.equal(byId.get('craft').hasAttribute('hidden'), true, 'the crafting panel starts closed');
+game.toggleCraft(true);
+assert.equal(byId.get('craft').hidden, false, 'C opens it');
+assert.equal(game.input.enabled, false, 'the controls park');
+game.toggleCraft(false);
+assert.equal(byId.get('craft').hidden, true, 'and closing gives them back');
+assert.equal(game.input.enabled, true, 'so the player can move again');
+byId.get('close-craft').dispatch('click');
+assert.equal(game.craftOpen, false, 'the Done button closes it too');
+
+// --- chest storage
+let taken = [];
+game.ui.callbacks.takeFromStorage = id => taken.push(id);
+const contents = new Map([[STONE2, 4], [LOG, 1]]);
+assert.equal(game.ui.buildStorage(contents, 3), 2, 'two stacks are shown');
+assert.equal(byId.get('storage-grid').children.length, 2, 'as two buttons');
+assert.equal(byId.get('storage-empty').hidden, true, 'and the empty note hides');
+assert.match(byId.get('storage-held').textContent, /3 in the stack/, 'the panel says what is in hand');
+game.ui.storageButtons.get(LOG).dispatch('click');
+assert.deepEqual(taken, [LOG], 'clicking a stack takes from the chest');
+assert.equal(game.ui.buildStorage(new Map(), 0), 0, 'an empty chest shows nothing');
+assert.equal(byId.get('storage-empty').hidden, false, 'and says it is empty');
+assert.match(byId.get('storage-held').textContent, /nothing/, 'with nothing in hand');
+assert.equal(game.ui.setStorage(true), true, 'the chest overlay opens');
+assert.equal(byId.get('storage').hidden, false, 'and is on screen');
+assert.equal(game.ui.setStorage(false), false, 'and closes');
+
+// --- the sleep fade
+assert.equal(game.ui.setSleep(true), true, 'the fade can be turned on');
+assert.equal(byId.get('sleep').hidden, false, 'and covers the screen');
+assert.equal(game.ui.setSleepProgress(1), 0, 'a full second left is still black');
+assert.equal(Math.round(game.ui.setSleepProgress(0.4) * 100), 60, 'and it brightens as the night runs out');
+assert.equal(game.ui.setSleep(false), false, 'then it is switched off again');
+assert.equal(byId.get('sleep').hidden, true, 'and hidden');
+
+// --- hotbar cubes
+const cubeSlot = game.ui.hotbar.children[0];
+assert.equal(game.ui.drawHotbarIcons(game.ui.hotbar, [STONE2, LOG, PLANKS]), 3, 'cubes are drawn for the chosen blocks');
+const cubeCanvas = cubeSlot.children.find(child => child.className === 'slot-cube');
+assert.ok(cubeCanvas, 'the slot holds a canvas');
+assert.equal(cubeCanvas.width, 34, 'drawn at 34 pixels');
+assert.equal(cubeCanvas.getContext('2d').fillCalls, 3, 'three faces painted');
+assert.equal(game.ui.drawHotbarIcons(game.ui.hotbar, [null, null, null]), 3, 'every slot still gets a canvas, empty or not');
 
 console.log('web DOM smoke test passed — %d ids from index.html, menu, pause, drag-look and seeds all wired'
   .replace('%d', ids.length));

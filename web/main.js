@@ -6,8 +6,8 @@
  */
 
 import {
-  AIR, BIRCH_LOG, DIAMOND_ORE, HOTBAR, LOG, PALETTE, REACH, SAPLING, SPRUCE_LOG, TORCH,
-  blockById,
+  AIR, BED, BIRCH_LOG, CHEST, DIAMOND_ORE, DOOR, HOTBAR, LADDER, LOG, PALETTE, REACH, RECIPES,
+  SAPLING, SPRUCE_LOG, TORCH, blockById,
 } from './constants.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
@@ -21,8 +21,9 @@ import { Ui } from './ui.js';
 import { Weather } from './weather.js';
 import { OptionsPanel } from './options.js';
 import { VoxelWorld } from './world.js';
-import { DayCycle, Footsteps, Mining, describeTarget } from './gameplay.js';
+import { DayCycle, Footsteps, Mining, describeTarget, isNight } from './gameplay.js';
 import { placementCell, raycast } from './raycast.js';
+import { addTo, canCraft, countOf, craft, craftable, missingFor, spend } from './crafting.js';
 
 const AUTOSAVE_SECONDS = 5;
 const ACTION_REPEAT = 0.22;    // seconds between placed blocks while the button is held
@@ -50,6 +51,9 @@ export class PixeledGame {
     this.tally = { broken: 0, placed: 0, steps: 0, distance: 0 };
     this.milestones = new Set();
     this.inventory = new Map();          // block id -> how many you have dug up
+    this.openChest = null;               // the chest whose contents are on screen, if any
+    this.craftOpen = false;
+    this.sleeping = 0;                   // seconds of the fade to morning left to run
     this.slotBlocks = [...HOTBAR];       // the palette can swap what each hotbar key holds
     this.worldTimer = 0;                 // seconds until the next world simulation tick
     this.damage = 0;                     // lava hurts over time, not instantly
@@ -82,6 +86,11 @@ export class PixeledGame {
       closeHelp: () => this.closeHelp(),
       openMenu: () => this.pause(true),
       closePalette: () => this.togglePalette(false),
+      closeCraft: () => this.toggleCraft(false),
+      closeStorage: () => this.closeStorage(),
+      craft: recipe => this.doCraft(recipe),
+      takeFromStorage: id => this.takeFromStorage(id),
+      storeHeld: () => this.storeHeld(),
       fullscreen: () => this.toggleFullscreen(),
       toggleSound: () => { const enabled = this.audio.toggle(); this.ui.setSound(enabled); this.menu?.setSound(enabled); return enabled; },
       selectHotbar: index => this.selectHotbar(index),
@@ -94,8 +103,10 @@ export class PixeledGame {
       toggleFly: () => this.toggleFly(),
       toggleHelp: () => (document.getElementById('help-modal')?.hidden ? this.openHelp() : this.closeHelp()),
       togglePalette: () => this.togglePalette(),
+      toggleCraft: () => this.toggleCraft(),
       toggleDebug: () => this.toggleDebug(),
       toggleCamera: () => this.toggleCamera(),
+      interact: () => this.interact(),
       closeHelp: () => this.closeHelp(),
       onEscape: () => this.escape(),
       onKey: code => Boolean(this.menu?.onKey(code)),
@@ -312,14 +323,153 @@ export class PixeledGame {
     if (open) {
       this.input.enabled = false;
       this.input.release();
+      this.ui.drawHotbarIcons(this.ui.hotbar, this.slotBlocks);
       this.ui.buildPalette(PALETTE, {
         counts: this.inventory,
         onPick: id => { this.chooseBlock(id); this.ui.setPalette(false); this.input.enabled = true; },
+        onCraft: () => { this.togglePalette(false); this.toggleCraft(true); },
       });
     } else {
       this.input.enabled = true;
     }
     return open;
+  }
+
+  /**
+   * E (or a tap on an interactive block): doors swing, chests open their contents, beds let you
+   * sleep through the night.
+   */
+  interact() {
+    const hit = this.target();
+    if (!hit) { this.ui.toast('Nothing in reach — aim at a door or a chest'); return null; }
+    const block = blockById(this.world.get(hit.x, hit.y, hit.z));
+    switch (block.interactive) {
+      case 'door': {
+        const open = this.world.toggleDoor(hit.x, hit.y, hit.z);
+        this.audio.blip(open ? 520 : 400, 0.09, 'square', 0.03);
+        this.renderer.invalidate(this.world, hit.x, hit.z);
+        this.ui.toast(open ? 'The door swings open' : 'The door shuts');
+        this.dirty = true;
+        return 'door';
+      }
+      case 'chest': {
+        this.openStorage(hit.x, hit.y, hit.z);
+        return 'chest';
+      }
+      case 'bed': {
+        this.sleep(hit.x, hit.y, hit.z);
+        return 'bed';
+      }
+      default:
+        this.ui.toast(`${block.name} is not something you can use`);
+        return null;
+    }
+  }
+
+  openStorage(x, y, z) {
+    this.openChest = { x, y, z, contents: this.world.chestAt(x, y, z, true) };
+    this.thirdPerson = false;
+    this.ui.buildStorage(this.openChest.contents, countOf(this.inventory, this.slotBlock()));
+    this.ui.setStorage(true);
+    this.input.enabled = false;
+    this.input.release();
+    this.audio.blip(620, 0.07, 'sine', 0.02);
+    return true;
+  }
+
+  closeStorage() {
+    if (!this.openChest) return false;
+    const chest = this.world.chestAt(this.openChest.x, this.openChest.y, this.openChest.z);
+    this.openChest = null;
+    this.ui.setStorage(false);
+    this.input.enabled = true;
+    this.dirty = true;                       // the chest contents are part of the save
+    return Boolean(chest);
+  }
+
+  /** Move one of a stack out of the open chest into the inventory. */
+  takeFromStorage(id) {
+    if (!this.openChest) return false;
+    const count = this.openChest.contents.get(id) ?? 0;
+    if (count <= 0) return false;
+    if (count > 1) this.openChest.contents.set(id, count - 1);
+    else this.openChest.contents.delete(id);
+    addTo(this.inventory, id, 1);
+    this.audio.select();
+    this.ui.buildStorage(this.openChest.contents, countOf(this.inventory, this.slotBlock()));
+    this.dirty = true;
+    return true;
+  }
+
+  /** Put one of the held block into the open chest. */
+  storeHeld() {
+    if (!this.openChest) return false;
+    const id = this.slotBlock();
+    if (!spend(this.inventory, id, 1)) { this.ui.toast(`No ${blockById(id).name.toLowerCase()} left to store`); return false; }
+    this.openChest.contents.set(id, (this.openChest.contents.get(id) ?? 0) + 1);
+    this.audio.blip(440, 0.05, 'square', 0.02);
+    this.ui.buildStorage(this.openChest.contents, countOf(this.inventory, this.slotBlock()));
+    this.dirty = true;
+    return true;
+  }
+
+  /** Sleep the night away on a bed. Daytime naps are refused, exactly like the real thing. */
+  sleep(x, y, z) {
+    if (!isNight(this.day.clock)) { this.ui.toast('You can only sleep at night'); return false; }
+    this.player.x = x + 0.5;
+    this.player.z = z + 0.5;
+    this.player.y = Math.max(this.player.y, this.world.blockTop(x, y, z) ?? this.player.y);
+    this.sleeping = 1.6;
+    this.ui.setSleep(true);
+    this.audio.blip(300, 0.5, 'sine', 0.05);
+    return true;
+  }
+
+  finishSleep() {
+    this.sleeping = 0;
+    this.day.clock = 0.28;                    // a little after dawn
+    this.ui.setSleep(false);
+    this.ui.toast('Good morning', 2600);
+    this.dirty = true;
+  }
+
+  /** C: the crafting panel, listing every recipe and what it is missing. */
+  toggleCraft(force) {
+    const open = force === undefined ? !this.craftOpen : Boolean(force);
+    this.craftOpen = open;
+    this.ui.setCraft(open);
+    this.input.enabled = !open;
+    if (open) {
+      this.input.release();
+      this.refreshCraft();
+    }
+    return open;
+  }
+
+  refreshCraft() {
+    this.ui.buildCraft(RECIPES, {
+      canCraft: recipe => canCraft(this.inventory, recipe),
+      missing: recipe => missingFor(this.inventory, recipe),
+      onCraft: recipe => this.doCraft(recipe),
+    });
+    this.ui.setCraftInventory(this.inventory);
+    return this.ui.lastCraftable ?? 0;
+  }
+
+  doCraft(recipe) {
+    const result = craft(this.inventory, recipe);
+    if (!result) {
+      this.ui.toast(`Not enough for ${recipe.label.toLowerCase()}`);
+      this.audio.blip(180, 0.12, 'sawtooth', 0.03);
+      this.refreshCraft();
+      return 0;
+    }
+    this.audio.craft?.();
+    this.ui.toast(`Crafted ${recipe.count > 1 ? recipe.count + ' ' : ''}${blockById(recipe.out).name.toLowerCase()}`);
+    this.milestone('first-craft', 'Crafting! Ingredients go in, building blocks come out');
+    this.refreshCraft();
+    this.ui.setSlotBlock(this.selected, this.slotBlock());
+    return result;
   }
 
   /** F3: the debug panel with coordinates, chunk, light levels and draw counts. */
@@ -353,6 +503,7 @@ export class PixeledGame {
     if (!PALETTE.includes(id)) return false;
     this.slotBlocks[this.selected] = id;
     this.ui.setSlotBlock(this.selected, id);
+    this.ui.drawHotbarIcons(this.ui.hotbar, this.slotBlocks);
     this.audio.select();
     return true;
   }
@@ -434,13 +585,15 @@ export class PixeledGame {
     this.audio.dig(blockId);
     this.tally.broken++;
     this.dirty = true;
-    this.inventory.set(blockId, (this.inventory.get(blockId) ?? 0) + 1);
+    addTo(this.inventory, blockId, 1);
+    // Breaking a wall next to water lets it in, one tick at a time.
+    this.world.wakeWater(hit.x, hit.y, hit.z);
     // Leaves sometimes drop a sapling, which the palette can plant back into the ground.
     const block = blockById(blockId);
-    if (block.id === SAPLING) this.inventory.set(SAPLING, (this.inventory.get(SAPLING) ?? 0) + 1);
+    if (block.id === SAPLING) addTo(this.inventory, SAPLING, 1);
     else if (block.tint === 'foliage' || blockId === SAPLING) {
       if (hash01(hit.x * 3 + hit.y, hit.z * 5 + hit.y, this.world.seed) < 0.22) {
-        this.inventory.set(SAPLING, (this.inventory.get(SAPLING) ?? 0) + 1);
+        addTo(this.inventory, SAPLING, 1);
         this.ui.toast('A sapling! Plant it with the palette (B) and it will grow');
       }
     }
@@ -476,7 +629,11 @@ export class PixeledGame {
     if (this.world.get(cell.x, cell.y, cell.z) !== AIR) return false;
     const id = this.slotBlock();
     if (this.playerOccupies(cell)) { this.ui.toast('Make a little room first'); return false; }
-    this.world.set(cell.x, cell.y, cell.z, id);
+    const placed = this.world.placeBlock(cell.x, cell.y, cell.z, id, {
+      yaw: this.player.yaw,
+      face: hit.normal ?? null,
+    });
+    if (!placed) { this.ui.toast(`${blockById(id).name} will not go there`); return false; }
     this.renderer.invalidate(this.world, cell.x, cell.z);
     this.audio.place(id);
     this.tally.placed++;
@@ -484,7 +641,7 @@ export class PixeledGame {
     this.checkMilestones();
     if (this.settings.get('particles')) this.particles.burst(cell.x, cell.y, cell.z, this.particleColour(id), 8, 0.3, 2.2);
     if (id === SAPLING) this.world.plantSapling(cell.x, cell.y, cell.z);
-    this.inventory.set(id, Math.max(0, (this.inventory.get(id) ?? 0) - 1));
+    spend(this.inventory, id, 1);
     return true;
   }
 
@@ -636,6 +793,13 @@ export class PixeledGame {
     }
     this.lastPlace += dt;
     if (this.input.placing && this.lastPlace > ACTION_REPEAT) { this.lastPlace = 0; this.build(); }
+
+    // ---- sleeping through the night ---------------------------------------------
+    if (this.sleeping > 0) {
+      this.sleeping = Math.max(0, this.sleeping - dt);
+      this.ui.setSleepProgress(this.sleeping / 1.6);
+      if (this.sleeping === 0) this.finishSleep();
+    }
 
     // ---- clock and weather ------------------------------------------------------
     this.day.update(dt);

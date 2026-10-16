@@ -131,13 +131,17 @@ const { Mining, DayCycle, Footsteps, breakSeconds, dayPhase, isNight, describeTa
 const blockIds = constants.BLOCKS.map(entry => entry.id);
 assert.equal(new Set(blockIds).size, blockIds.length, 'block ids are unique');
 assert.deepEqual(blockIds.slice(0, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'ids 1-10 still match the other editions');
-assert.equal(blockIds.length, 32, `thirty-two blocks plus air (${blockIds.length})`);
+assert.equal(blockIds.length, 48, `forty-eight blocks plus air (${blockIds.length})`);
 assert.equal(constants.blockById(0).name, 'Air', 'id 0 is air in every edition');
 assert.equal(constants.blockById(23).name, 'Spruce needles', 'the earlier batch of ids is untouched');
 assert.equal(constants.blockById(29).name, 'Pumpkin', 'the third wave of ids keeps its order');
 assert.equal(constants.blockById(30).name, 'Lava', 'lava is id 30');
 assert.equal(constants.blockById(31).name, 'Torch', 'torches are id 31');
 assert.equal(constants.blockById(32).name, 'Sapling', 'and saplings are id 32');
+assert.equal(constants.blockById(33).name, 'Smooth stone', 'the building batch starts at 33');
+assert.equal(constants.blockById(40).name, 'Glass pane', 'panes are id 40');
+assert.equal(constants.blockById(45).name, 'Bed', 'beds are id 45');
+assert.equal(constants.blockById(48).name, 'Bookshelf', 'and bookshelves close the range at 48');
 for (const id of blockIds) {
   const entry = constants.blockById(id);
   assert.equal(typeof entry.sound, 'string', `block ${entry.name} has a digging voice`);
@@ -147,7 +151,7 @@ for (const id of blockIds) {
 }
 assert.deepEqual(constants.ORES, [11, 12, 13, 14], 'four ores are declared');
 assert.deepEqual(constants.PLANTS, [18, 19], 'two plants are declared');
-assert.equal(constants.PALETTE.length, 30, `thirty placeable blocks (${constants.PALETTE.length})`);
+assert.equal(constants.PALETTE.length, 46, `forty-six placeable blocks (${constants.PALETTE.length})`);
 assert.ok(constants.PALETTE.includes(constants.TORCH), 'torches can be placed');
 assert.ok(constants.PALETTE.includes(constants.SAPLING), 'so can saplings');
 assert.ok(!constants.PALETTE.includes(constants.LAVA), 'lava is a hazard, not a building material');
@@ -654,6 +658,35 @@ class StubElement {
     return handlers.length;
   }
   append(...nodes) { this.children.push(...nodes); }
+  prepend(...nodes) { this.children.unshift(...nodes); }
+  querySelectorAll(selector) {
+    // Enough of a selector engine for the two cases the UI uses: a class, or a tag plus a class.
+    const [tag, klass] = selector.includes('.') ? selector.split('.') : [selector, null];
+    return this.children.flatMap(child => {
+      const matches = (!tag || child.tagName?.toLowerCase() === tag.toLowerCase())
+        && (!klass || child.classList?.contains(klass));
+      if (matches) return [child];
+      return child.querySelectorAll ? child.querySelectorAll(selector) : [];
+    });
+  }
+  getContext(type) {
+    if (type !== '2d') return null;
+    if (!this.ctx2d) {
+      const calls = [];
+      const record = name => (...args) => calls.push({ name, args });
+      this.ctx2d = {
+        calls, fillStyle: '', strokeStyle: '', lineWidth: 1,
+        clearRect: record('clearRect'), beginPath: record('beginPath'), closePath: record('closePath'),
+        moveTo: record('moveTo'), lineTo: record('lineTo'), arc: record('arc'),
+        fill: record('fill'), stroke: record('stroke'), fillRect: record('fillRect'),
+      };
+      Object.defineProperty(this.ctx2d, 'fillStyle', {
+        get() { return calls.filter(call => call.name === 'fillStyle').at(-1)?.args[0] ?? ''; },
+        set(value) { calls.push({ name: 'fillStyle', args: [value] }); },
+      });
+    }
+    return this.ctx2d;
+  }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(name, value) { this.attributes.add(name); this[name] = value; }
   removeAttribute(name) { this.attributes.delete(name); }
@@ -987,15 +1020,32 @@ assert.match(elements.get('hud-mined').textContent, /^\d+$/, 'and the blocks bro
 // do not depend on whether the random world grew a tree or a cliff at that exact spot.
 const PAD = { x: 64, z: 64, half: 8 };
 const padHeight = live.world.surfaceHeight(PAD.x, PAD.z);
+// The pad is levelled all the way to the top of the world: anything left hanging above it would
+// fall in a few ticks later and sit exactly where the placement tests want to build.
 const buildPad = () => {
   for (let dz = -PAD.half; dz <= PAD.half; dz++) {
     for (let dx = -PAD.half; dx <= PAD.half; dx++) {
       live.world.set(PAD.x + dx, padHeight, PAD.z + dz, STONE);
-      for (let y = padHeight + 1; y <= padHeight + 8; y++) live.world.set(PAD.x + dx, y, PAD.z + dz, AIR);
+      for (let y = padHeight + 1; y < CHUNK * 4; y++) live.world.set(PAD.x + dx, y, PAD.z + dz, AIR);
     }
   }
+  live.world.fallQueue?.clear();
 };
 buildPad();
+/**
+ * Step frames while holding the crosshair exactly where the test wants it. The game rotates the view
+ * for its own reasons (menu drift, leftover look deltas), so aimed tests re-aim every frame.
+ */
+const stepAimed = (frames, yaw, pitch) => {
+  for (let frame = 0; frame < frames; frame++) {
+    live.player.yaw = yaw;
+    live.player.pitch = pitch;
+    step(1);
+  }
+  live.player.yaw = yaw;
+  live.player.pitch = pitch;
+};
+
 const standOnPad = (cellX, cellZ, lift = 3) => {
   live.player.flying = true;
   live.player.x = cellX + 0.5;
@@ -1010,14 +1060,13 @@ standOnPad(PAD.x, PAD.z);
 live.world.set(PAD.x, padHeight, PAD.z, STONE);
 live.world.set(PAD.x, padHeight + 1, PAD.z, AIR);
 live.world.set(PAD.x, padHeight + 2, PAD.z, AIR);
-live.player.pitch = -1.5; live.player.yaw = 0;
-step(1);
+stepAimed(1, 0, -1.5);
 const stoneTarget = live.target();
 assert.ok(stoneTarget, 'there is stone under the crosshair');
 live.mine();
 assert.notEqual(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'one tap does not break stone');
 live.input.mining = true;
-step(90);
+stepAimed(90, 0, -1.5);
 live.input.mining = false;
 assert.equal(live.world.get(stoneTarget.x, stoneTarget.y, stoneTarget.z), AIR, 'holding the button does');
 assert.ok(live.particles.spawned > 0, 'breaking a block throws particles');
@@ -1182,11 +1231,13 @@ assert.equal(live.milestone('brand-new', 'hello'), true, 'a new key fires');
 // --- breaking a diamond celebrates, which also exercises the deep-ore flavour text
 if (live.paused) live.resume();
 live.world.set(PAD.x + 3, padHeight, PAD.z + 3, constants.DIAMOND_ORE);
+// Clear the column above it: anything that landed there earlier would soak up the dig.
+for (let y = padHeight + 1; y <= padHeight + 4; y++) live.world.set(PAD.x + 3, y, PAD.z + 3, constants.AIR);
 standOnPad(PAD.x + 3, PAD.z + 3);
-live.player.pitch = -1.5; live.player.yaw = 0;
-step(1);
+stepAimed(1, 0, -1.5);
+assert.equal(live.target()?.y, padHeight, 'the crosshair is aimed straight at the diamond');
 live.input.mining = true;
-step(120);
+stepAimed(180, 0, -1.5);
 live.input.mining = false;
 assert.equal(live.world.get(PAD.x + 3, padHeight, PAD.z + 3), AIR, 'the diamond block breaks after a long dig');
 assert.ok(live.milestones.has('diamond'), 'finding diamond is a milestone');
@@ -1209,8 +1260,7 @@ assert.equal(live.slotBlock(), constants.TORCH, 'slot 0 still holds the torch');
 // place the torch on the test pad and check the world lights up around it
 buildPad();
 standOnPad(PAD.x + 2, PAD.z + 2);
-live.player.pitch = -1.5;
-step(2);
+stepAimed(2, 0, -1.5);
 live.selectHotbar(0);
 const torchTarget = live.target();
 assert.ok(torchTarget, 'there is ground to place a torch on');
@@ -1250,9 +1300,14 @@ for (let y = padHeight; y < padHeight + 10; y++) {
 }
 assert.equal(landing, padHeight + 1, 'and it lands right on the pad');
 
-// --- lava burns: swap one pad block for lava and stand the player in it
+// --- lava burns: a 3x3 pool so the landing does not depend on sub-block drift
 const lavaCell = { x: PAD.x - 4, z: PAD.z - 4 };
-live.world.set(lavaCell.x, padHeight, lavaCell.z, constants.LAVA);
+for (let dz = -1; dz <= 1; dz++) {
+  for (let dx = -1; dx <= 1; dx++) {
+    live.world.set(lavaCell.x + dx, padHeight, lavaCell.z + dz, constants.LAVA);
+    live.world.set(lavaCell.x + dx, padHeight - 1, lavaCell.z + dz, constants.STONE);   // a floor to stand on
+  }
+}
 standOnPad(lavaCell.x, lavaCell.z, 2);
 live.player.flying = false;
 live.player.velocityY = 0;
@@ -1272,8 +1327,13 @@ standOnPad(PAD.x, PAD.z, 3);
 step(30);
 assert.ok(live.heat < 0.2, 'getting out of the lava clears the haze');
 
-// --- leaf decay in the running game
-const trunk = { x: PAD.x - 8, y: padHeight + 1, z: PAD.z + 8 };
+// --- leaf decay in the running game, well above the pad so no generated tree is in reach
+const trunk = { x: PAD.x - 6, y: padHeight + 10, z: PAD.z + 6 };
+for (let dy = -1; dy <= 6; dy++) {
+  for (let dz = -3; dz <= 3; dz++) {
+    for (let dx = -3; dx <= 3; dx++) live.world.set(trunk.x + dx, trunk.y + dy, trunk.z + dz, constants.AIR);
+  }
+}
 for (let dy = 0; dy < 4; dy++) live.world.set(trunk.x, trunk.y + dy, trunk.z, constants.LOG);
 for (let dz = -1; dz <= 1; dz++) {
   for (let dx = -1; dx <= 1; dx++) {
@@ -1284,6 +1344,8 @@ for (let dz = -1; dz <= 1; dz++) {
 assert.equal(live.world.decayLeaves(trunk.x, trunk.y + 3, trunk.z).length, 0, 'leaves around a trunk stay put');
 live.world.set(trunk.x, trunk.y + 3, trunk.z, constants.AIR);
 live.world.set(trunk.x, trunk.y + 2, trunk.z, constants.AIR);
+live.world.set(trunk.x, trunk.y + 1, trunk.z, constants.AIR);
+live.world.set(trunk.x, trunk.y, trunk.z, constants.AIR);
 assert.ok(live.world.decayLeaves(trunk.x, trunk.y + 3, trunk.z).length > 0, 'and wither once the trunk is gone');
 
 // --- the debug panel and the camera
@@ -1321,6 +1383,259 @@ live.player.y = 12;
 live.updateAmbient(1, 'forest', { intensity: 0 });
 assert.ok(live.ambientTimer > 0, 'the ambience waits before playing again');
 assert.ok(live.world.lightSourceCount > 0, 'the world knows about its glowing blocks');
+
+// =============================================================== v3.4: building blocks
+
+// --- the new blocks are all shape-aware, and nothing moved the old ids
+const { SHAPES, RECIPES, CLIMBABLE, INTERACTIVE } = constants;
+assert.deepEqual(Object.keys(SHAPES).map(Number).sort((a, b) => a - b), [40, 41, 42, 43, 44, 45, 46, 47], 'eight partial shapes');
+assert.equal(SHAPES[46], 'slab', 'slabs are a slab');
+assert.equal(SHAPES[47], 'stairs', 'stairs are stairs');
+assert.equal(CLIMBABLE.has(42), true, 'ladders are climbable');
+assert.equal(INTERACTIVE[43], 'door', 'doors open');
+assert.equal(INTERACTIVE[44], 'chest', 'chests hold things');
+assert.equal(INTERACTIVE[45], 'bed', 'beds let you sleep');
+assert.ok(RECIPES.length >= 18, `there are recipes to make (${RECIPES.length})`);
+assert.ok(RECIPES.every(recipe => recipe.label && recipe.count > 0 && recipe.needs.length), 'every recipe is described');
+assert.ok(RECIPES.every(recipe => recipe.needs.every(([id, n]) => constants.blockById(id).id === id && n > 0)), 'every ingredient is a real block');
+assert.ok(RECIPES.every(recipe => constants.PALETTE.includes(recipe.out)), 'every recipe makes something you can place');
+
+// --- shapeBoxes describes every shape, and a cube is a single box
+const { shapeBoxes } = await import('../web/shapes.js');
+const { PLANKS } = constants;
+assert.equal(shapeBoxes(constants.blockById(constants.STONE), 0).length, 1, 'a full cube is one box');
+assert.equal(shapeBoxes(constants.blockById(constants.SLAB), 0)[0].max[1], 0.5, 'a slab is half a block tall');
+const stairBoxes = shapeBoxes(constants.blockById(constants.STAIRS), 1);
+assert.equal(stairBoxes.length, 2, 'stairs are two boxes');
+assert.deepEqual(stairBoxes[1].min, [0.5, 0.5, 0], 'facing east puts the raised step on the east half');
+assert.deepEqual(shapeBoxes(constants.blockById(constants.STAIRS), 3)[1].max[0], 0.5, 'facing west mirrors it');
+assert.equal(shapeBoxes(constants.blockById(constants.CHEST), 0).length, 2, 'a chest is a body plus a lid');
+assert.equal(shapeBoxes(constants.blockById(constants.BED), 0).length, 2, 'a bed is a mattress plus a pillow');
+assert.equal(shapeBoxes(constants.blockById(constants.DOOR), 0)[0].max[0] - shapeBoxes(constants.blockById(constants.DOOR), 0)[0].min[0], 0.875, 'a closed door is a flat plate');
+const openDoor = shapeBoxes(constants.blockById(constants.DOOR), 1)[0];
+const shutDoor = shapeBoxes(constants.blockById(constants.DOOR), 0)[0];
+assert.equal(openDoor.max[2] - openDoor.min[2] > shutDoor.max[2] - shutDoor.min[2], true, 'an open door is a wide plate across z');
+assert.equal(openDoor.max[0] - openDoor.min[0] < shutDoor.max[0] - shutDoor.min[0], true, 'and a thin plate across x, which is exactly a quarter turn');
+const fenceAlone = shapeBoxes(constants.blockById(constants.FENCE), 0, () => false);
+assert.equal(fenceAlone.length, 1, 'a lone fence is just its post');
+const fenceRun = shapeBoxes(constants.blockById(constants.FENCE), 0, (dx, dz) => dx === 1);
+assert.equal(fenceRun.length, 3, 'a fence beside another fence grows two rails toward it');
+const paneAlone = shapeBoxes(constants.blockById(constants.GLASS_PANE), 0, () => false);
+assert.equal(paneAlone.length, 2, 'a lone pane is a small cross so it is still visible');
+
+// --- placing a shaped block records how it faces
+const shapeWorld = new VoxelWorld(707);
+assert.equal(shapeWorld.placeBlock(70, 40, 70, constants.STAIRS, { yaw: -Math.PI / 2 }), true, 'stairs can be placed in the air');
+assert.equal(shapeWorld.getMeta(70, 40, 70), 1, 'and they remember they face east');
+assert.equal(shapeWorld.placeBlock(71, 40, 70, constants.LADDER, { face: [0, 0, -1] }), true, 'a ladder can be placed');
+assert.equal(shapeWorld.getMeta(71, 40, 70), 2, 'and it hangs on the wall it was aimed at');
+assert.equal(shapeWorld.placeBlock(72, 40, 70, constants.DOOR, { yaw: Math.PI }), true, 'a door can be placed');
+assert.equal(shapeWorld.isDoorOpen(72, 40, 70), false, 'and it starts shut');
+assert.equal(shapeWorld.placeBlock(73, 40, 70, constants.LAVA), false, 'lava still cannot be placed');
+assert.equal(shapeWorld.placeBlock(70, 40, 70, constants.STONE), false, 'and nothing replaces a block already there');
+assert.equal(shapeWorld.placeBlock(70, 40, 70, constants.STONE, { replace: true }), true, 'unless the caller asks to replace it');
+
+// --- collision: you stand on a slab at half height and walk up stairs
+const shapePad = { x: 70, z: 70, ground: shapeWorld.surfaceHeight(70, 70) + 1 };
+for (let dz = -6; dz <= 6; dz++) {
+  for (let dx = -6; dx <= 6; dx++) {
+    for (let y = shapePad.ground; y < shapePad.ground + 6; y++) shapeWorld.set(shapePad.x + dx, y, shapePad.z + dz, constants.AIR);
+    shapeWorld.set(shapePad.x + dx, shapePad.ground - 1, shapePad.z + dz, constants.STONE);
+  }
+}
+assert.equal(shapeWorld.blockTop(shapePad.x, shapePad.ground - 1, shapePad.z), shapePad.ground, 'flat ground tops out at the surface');
+shapeWorld.set(shapePad.x + 1, shapePad.ground, shapePad.z, constants.SLAB);
+shapeWorld.set(shapePad.x + 2, shapePad.ground, shapePad.z, constants.STAIRS);
+shapeWorld.setMeta(shapePad.x + 2, shapePad.ground, shapePad.z, 1);
+assert.equal(shapeWorld.blockTop(shapePad.x + 1, shapePad.ground, shapePad.z), shapePad.ground + 0.5, 'a slab tops out half a block up');
+assert.equal(shapeWorld.blockTop(shapePad.x + 2, shapePad.ground, shapePad.z), shapePad.ground + 1, 'a stair tops out a whole block up');
+assert.equal(shapeWorld.overlapsSolid(shapePad.x + 1.2, shapePad.ground + 0.6, shapePad.z + 0.2,
+  shapePad.x + 1.8, shapePad.ground + 2.4, shapePad.z + 0.8), false, 'you walk over a slab, not into it');
+assert.equal(shapeWorld.overlapsSolid(shapePad.x + 1.2, shapePad.ground + 0.2, shapePad.z + 0.2,
+  shapePad.x + 1.8, shapePad.ground + 1.8, shapePad.z + 0.8), true, 'but the slab still stops you at ground level');
+const shapeWalker = new Player(shapeWorld);
+shapeWalker.x = shapePad.x + 0.5;
+shapeWalker.z = shapePad.z + 0.5;
+shapeWalker.y = shapePad.ground;
+shapeWalker.yaw = -Math.PI / 2;              // face east, so "forward" is +x
+let slabHeight = 0, stairHeight = 0;
+for (let frame = 0; frame < 120; frame++) {
+  shapeWalker.update(1 / 60, { forward: true }, shapeWorld);
+  if (shapeWalker.x > shapePad.x + 1.05 && shapeWalker.x < shapePad.x + 1.9) slabHeight = Math.max(slabHeight, shapeWalker.y);
+  if (shapeWalker.x > shapePad.x + 2.05 && shapeWalker.x < shapePad.x + 2.9) stairHeight = Math.max(stairHeight, shapeWalker.y);
+}
+// The +0.0001 is the collision epsilon: you stand a hair above the surface you landed on.
+assert.ok(Math.abs(slabHeight - (shapePad.ground + 0.5)) < 1e-3, `walking onto a slab steps up half a block (${slabHeight})`);
+assert.ok(Math.abs(stairHeight - (shapePad.ground + 1)) < 1e-3, `and stairs are a full step (${stairHeight})`);
+assert.equal(shapeWorld.overlapsSolid(shapeWalker.x - 0.29, shapeWalker.y + 0.05, shapeWalker.z - 0.29,
+  shapeWalker.x + 0.29, shapeWalker.y + 1.75, shapeWalker.z + 0.29), false, 'the walker never ends up inside a block');
+
+// --- ladders: hold on, climb, and slide down gently
+const ladderX = shapePad.x + 4;
+for (let dy = 0; dy < 6; dy++) {
+  shapeWorld.set(ladderX, shapePad.ground + dy, shapePad.z, constants.LADDER);
+  shapeWorld.setMeta(ladderX, shapePad.ground + dy, shapePad.z, 0);
+  shapeWorld.set(ladderX - 1, shapePad.ground + dy, shapePad.z, constants.STONE);
+}
+const climber = new Player(shapeWorld);
+climber.x = ladderX + 0.5;
+climber.z = shapePad.z + 0.5;
+climber.y = shapePad.ground + 2.5;
+climber.flying = false;
+climber.onGround = false;
+const startY = climber.y;
+for (let frame = 0; frame < 40; frame++) climber.update(1 / 60, { jump: true }, shapeWorld);
+assert.ok(climber.y > startY + 0.5, `holding jump climbs the ladder (${climber.y.toFixed(2)} from ${startY.toFixed(2)})`);
+const highY = climber.y;
+for (let frame = 0; frame < 30; frame++) climber.update(1 / 60, {}, shapeWorld);
+assert.ok(climber.y < highY, 'and letting go slides slowly back down');
+assert.ok(climber.y > highY - 3, 'but not as fast as a fall');
+
+// --- doors open and close, and only get in the way when shut
+const doorWorld = new VoxelWorld(11);
+doorWorld.set(70, 40, 70, constants.DOOR);
+const doorBox = (world) => world.overlapsSolid(70.1, 40.1, 70.1, 70.9, 41.9, 70.9);
+assert.equal(doorBox(doorWorld), true, 'a shut door stops you');
+assert.equal(doorWorld.toggleDoor(70, 40, 70), true, 'opening it returns the new state');
+assert.equal(doorWorld.isDoorOpen(70, 40, 70), true, 'and it reports open');
+assert.equal(doorBox(doorWorld), false, 'an open door lets you through');
+assert.equal(doorWorld.toggleDoor(70, 40, 70), false, 'toggling again shuts it');
+assert.equal(doorBox(doorWorld), true, 'and it is solid again');
+
+// --- chests remember what you put in them, and forget when broken
+const chestWorld = new VoxelWorld(12);
+chestWorld.set(70, 40, 70, constants.CHEST);
+const chest = chestWorld.chestAt(70, 40, 70, true);
+chest.set(constants.STONE, 12);
+chest.set(constants.LOG, 3);
+assert.equal(chestWorld.chestAt(70, 40, 70).get(constants.STONE), 12, 'the chest holds what it was given');
+assert.equal(chestWorld.chestAt(71, 40, 70), null, 'and other cells have no chest');
+chestWorld.set(70, 40, 70, constants.AIR);
+assert.equal(chestWorld.chestAt(70, 40, 70), null, 'breaking a chest takes its contents with it');
+
+// --- water flows into what you dig out
+const flowWorld = new VoxelWorld(13);
+const flowY = 40;
+for (let dx = -1; dx < 6; dx++) {
+  flowWorld.set(70 + dx, flowY - 1, 70, constants.STONE);
+  flowWorld.set(70 + dx, flowY + 1, 70, constants.STONE);
+  flowWorld.set(70 + dx, flowY, 70, constants.AIR);
+  for (const dz of [-1, 1]) flowWorld.set(70 + dx, flowY, 70 + dz, constants.STONE);
+}
+flowWorld.set(69, flowY, 70, constants.WATER);
+flowWorld.wakeWater(70, flowY, 70);
+let flowTicks = 0;
+while (flowWorld.waterQueue.length && flowTicks < 40) { flowWorld.worldTick(); flowTicks++; }
+let flooded = 0;
+for (let dx = 0; dx < 6; dx++) if (flowWorld.get(70 + dx, flowY, 70) === constants.WATER) flooded++;
+assert.equal(flooded, 6, `water flows down the whole channel (${flooded}/6 in ${flowTicks} ticks)`);
+assert.equal(flowWorld.get(69, flowY + 1, 70) === constants.WATER, false, 'and it does not climb uphill');
+
+// --- crafting
+const { canCraft, craft, craftable, missingFor, spend, addTo, countOf, recipesUsing } = await import('../web/crafting.js');
+const backpack = new Map([[constants.LOG, 3], [constants.COAL_ORE, 1], [constants.SAND, 2]]);
+const torchRecipe = RECIPES.find(recipe => recipe.out === constants.TORCH);
+const glassRecipe = RECIPES.find(recipe => recipe.out === constants.GLASS);
+assert.equal(canCraft(backpack, torchRecipe), true, 'a log and coal make torches');
+assert.equal(countOf(backpack, constants.TORCH), 0, 'we start with no torches');
+assert.equal(craft(backpack, torchRecipe), 4, 'crafting gives four torches');
+assert.equal(countOf(backpack, constants.LOG), 2, 'and spends one log');
+assert.equal(countOf(backpack, constants.COAL_ORE), 0, 'and the coal');
+assert.equal(canCraft(backpack, glassRecipe), false, 'with no coal left, glass is out of reach');
+assert.deepEqual(missingFor(backpack, glassRecipe).map(item => item.id), [constants.COAL_ORE], 'and the panel can say exactly what is missing');
+assert.equal(craft(backpack, glassRecipe), 0, 'crafting without the ingredients changes nothing');
+assert.equal(countOf(backpack, constants.SAND), 2, 'the sand is untouched');
+assert.equal(craftable(new Map([[constants.LOG, 1]]), RECIPES).some(recipe => recipe.out === constants.PLANKS), true, 'one log is enough for planks');
+assert.equal(recipesUsing(constants.SAND).some(recipe => recipe.out === constants.GLASS), true, 'sand is used by the glass recipe');
+assert.equal(spend(backpack, constants.SAND, 5), false, 'you cannot spend what you do not have');
+assert.equal(countOf(backpack, constants.SAND), 2, 'and a refused spend changes nothing');
+assert.equal(addTo(backpack, constants.SAND, 3), 5, 'adding stacks up');
+assert.equal(spend(backpack, constants.SAND, 5), true, 'and spending it all works');
+assert.equal(backpack.has(constants.SAND), false, 'leaving no empty entry behind');
+
+// --- the mesher draws the shapes without tripping over them
+const shapeMesh = buildChunkMesh(shapeWorld, 4, 4);
+assert.ok(shapeMesh && shapeMesh.opaque.quadCount > 0, 'a chunk full of slabs and stairs still meshes');
+assert.equal(shapeMesh.opaque.positions.every(Number.isFinite), true, 'every vertex is a real number');
+const halfWorld = new VoxelWorld(14);
+halfWorld.set(70, 40, 70, constants.SLAB);        // chunk 4,4: floating high above the terrain
+const halfMesh = buildChunkMesh(halfWorld, 4, 4);
+assert.ok(halfMesh.opaque.quadCount >= 6, `a lone slab draws its faces (${halfMesh.opaque.quadCount} quads)`);
+const slabTop = halfMesh.opaque.positions.filter((value, index) => index % 3 === 1 && value > 40.4 && value < 40.6);
+assert.ok(slabTop.length >= 4, `its top face sits at half height (${slabTop.length} vertices at y=40.5)`);
+const slabBottom = halfMesh.opaque.positions.filter((value, index) => index % 3 === 1 && value > 39.9 && value < 40.1);
+assert.ok(slabBottom.length >= 4, 'and its bottom face sits on the cell floor');
+const midHeight = halfMesh.opaque.positions.filter((value, index) => index % 3 === 1 && value > 40.6 && value < 41);
+assert.equal(midHeight.length, 0, 'and nothing is drawn above the half-way line');
+
+// --- the live game: craft, place a shaped block, open a chest, sleep
+live.pause(false);
+if (live.paused) live.resume();
+live.storage.clear();
+addTo(live.inventory, constants.LOG, 4);
+addTo(live.inventory, constants.SMOOTH_STONE, 8);
+const recipesBefore = live.refreshCraft();
+assert.ok(recipesBefore > 0, `the crafting panel marks what you can afford (${recipesBefore})`);
+assert.equal(live.toggleCraft(true), true, 'C opens the crafting panel');
+assert.equal(live.input.enabled, false, 'and the controls park while it is open');
+assert.ok(live.ui.craftButtons.size >= 18, 'every recipe has a row');
+const plankRecipe = RECIPES.find(recipe => recipe.out === constants.PLANKS);
+const logsBefore = countOf(live.inventory, constants.LOG);
+live.doCraft(plankRecipe);
+assert.equal(countOf(live.inventory, constants.PLANKS), 4, 'crafting planks puts them in the bag');
+assert.equal(countOf(live.inventory, constants.LOG), logsBefore - 1, 'and spends the log');
+assert.equal(live.toggleCraft(false), false, 'C closes the panel');
+assert.equal(live.input.enabled, true, 'and gives the controls back');
+// A chest at eye height one block east of the player, who stands on the pad looking east.
+const chestCell = { x: PAD.x + 1, y: padHeight + 2, z: PAD.z };
+live.world.placeBlock(chestCell.x, chestCell.y, chestCell.z, constants.CHEST);
+live.player.flying = false;
+live.player.x = PAD.x + 0.5;
+live.player.z = PAD.z + 0.5;
+live.player.y = padHeight + 1;
+live.player.velocityX = live.player.velocityY = live.player.velocityZ = 0;
+live.player.yaw = -Math.PI / 2;              // face east, toward the chest
+live.player.pitch = 0;
+stepAimed(2, -Math.PI / 2, 0);
+assert.equal(live.target() && live.target().x, chestCell.x, 'the crosshair finds the chest');
+assert.equal(live.interact(), 'chest', 'E opens a chest you are looking at');
+assert.ok(live.openChest, 'and the game remembers which chest it is');
+assert.equal(live.storeHeld(), true, 'the held block goes in');
+const storedId = live.slotBlock();
+assert.equal(countOf(live.world.chestAt(chestCell.x, chestCell.y, chestCell.z), storedId), 1, 'so the chest holds it');
+const beforeTake = countOf(live.inventory, storedId);
+assert.equal(live.takeFromStorage(storedId), true, 'and taking it back works');
+assert.equal(countOf(live.inventory, storedId), beforeTake + 1, 'which puts it back in the bag');
+assert.equal(live.closeStorage(), true, 'the chest closes');
+assert.equal(live.openChest, null, 'and is forgotten');
+live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.DOOR);
+assert.equal(live.interact(), 'door', 'a door in the same place can be used');
+assert.equal(live.world.isDoorOpen(chestCell.x, chestCell.y, chestCell.z), true, 'which swings it open');
+assert.equal(live.interact(), 'door', 'and using it again');
+assert.equal(live.world.isDoorOpen(chestCell.x, chestCell.y, chestCell.z), false, 'shuts it');
+live.day.clock = 0.8;                        // midnight: bedtime
+live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.BED);
+assert.equal(live.interact(), 'bed', 'and a bed can be slept in at night');
+assert.ok(live.sleeping > 0, 'which starts the fade');
+step(120);
+assert.equal(live.sleeping, 0, 'the fade finishes on its own');
+assert.ok(!isNight(live.day.clock), `and wakes you up in the morning (clock ${live.day.clock.toFixed(2)})`);
+live.day.clock = 0.4;
+live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.BED);
+assert.equal(live.interact(), null, 'a daytime nap is refused');
+live.world.set(chestCell.x, chestCell.y, chestCell.z, constants.STONE);
+assert.equal(live.interact(), null, 'and aiming at a plain block does nothing');
+
+// --- hotbar icons are cubes, drawn on canvas, not colour chips
+live.selectHotbar(0);
+const iconsDrawn = live.ui.drawHotbarIcons(live.ui.hotbar, live.slotBlocks);
+assert.equal(iconsDrawn, 9, 'all nine hotbar slots get a cube');
+const firstSlot = live.ui.hotbar.children[0];
+assert.equal(firstSlot.children.some(child => child.className === 'slot-cube'), true, 'each slot holds a canvas');
+const iconCalls = firstSlot.children.find(child => child.className === 'slot-cube').getContext('2d').calls;
+assert.equal(iconCalls.filter(call => call.name === 'fill').length, 3, 'a cube is three filled faces');
+assert.equal(iconCalls.filter(call => call.name === 'closePath').length, 3, 'each face is a closed path');
+assert.equal(new Set(iconCalls.filter(call => call.name === 'fillStyle').map(call => call.args[0])).size, 3, 'and the three faces are shaded differently');
 
 console.log(`web smoke test passed — ${game.renderer.meshes.size} chunks meshed, ${glStub.stats.draws} draw calls, water blocks: ${waterCount}`);
 void CHUNK; void SEA_LEVEL;
