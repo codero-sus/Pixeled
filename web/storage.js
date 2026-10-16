@@ -15,6 +15,10 @@ export class BrowserSave {
       return {
         seed: save.seed,
         edits: new Map(Object.entries(save.edits ?? {})),
+        // Doors, stair facings, ladder sides and the contents of every chest you filled.
+        metaEdits: new Map(Object.entries(save.metaEdits ?? {})),
+        chests: save.chests ?? {},
+        inventory: save.inventory ?? null,
         player: save.player ?? null,
         selected: save.selected ?? 0,
         clock: typeof save.clock === 'number' ? save.clock : 0.42,
@@ -24,17 +28,22 @@ export class BrowserSave {
         broken: Number.isFinite(save.broken) ? save.broken : 0,
         placed: Number.isFinite(save.placed) ? save.placed : 0,
         steps: Number.isFinite(save.steps) ? save.steps : 0,
+        mode: typeof save.mode === 'string' ? save.mode : null,
+        daily: save.daily ?? null,
       };
     } catch (_) {
       return null;
     }
   }
 
-  write({ seed, edits, player, selected, clock, weather = null, distance = null, broken = 0, placed = 0, steps = 0 }) {
+  write({ seed, edits, player, selected, clock, weather = null, distance = null, broken = 0, placed = 0, steps = 0, mode = null, daily = null, metaEdits = null, chests = null, inventory = null }) {
     try {
       const payload = {
         seed,
         edits: Object.fromEntries(edits),
+        metaEdits: metaEdits ? Object.fromEntries(metaEdits) : {},
+        chests: chests ?? {},
+        inventory: inventory ? Object.fromEntries([...inventory].map(([id, count]) => [id, count])) : null,
         player: { x: player.x, y: player.y, z: player.z, yaw: player.yaw, pitch: player.pitch },
         selected,
         clock,
@@ -43,6 +52,8 @@ export class BrowserSave {
         broken,
         placed,
         steps,
+        mode,
+        daily,
         savedAt: Date.now(),
       };
       localStorage.setItem(KEY, JSON.stringify(payload));
@@ -54,6 +65,27 @@ export class BrowserSave {
 
   clear() {
     try { localStorage.removeItem(KEY); } catch (_) { /* storage can be disabled */ }
+  }
+
+  /**
+   * Small side-keys stored beside the save: the daily challenge's progress and the recent-worlds
+   * shelf. Strings in, strings out, so the callers own their own shape.
+   */
+  get(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+  }
+
+  set(key, value) {
+    try {
+      localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+      return true;
+    } catch (_) {
+      return false;      // private mode, or the quota is full
+    }
+  }
+
+  remove(key) {
+    try { localStorage.removeItem(key); } catch (_) { /* storage can be disabled */ }
   }
 }
 

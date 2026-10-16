@@ -30,6 +30,8 @@ export class Player {
     this.inWater = false;
     this.inLava = false;
     this.climbed = false;
+    this.fallDistance = 0;       // blocks fallen since leaving the ground, for fall damage
+    this.landedHard = 0;         // blocks of the drop that just ended, read once by the game
     this.wading = false;
     this.headUnder = false;
     this.breath = BREATH_SECONDS;
@@ -71,6 +73,7 @@ export class Player {
 
   update(dt, input, world) {
     const forward = (input.forward ? 1 : 0) - (input.back ? 1 : 0);
+    this.landedHard = 0;
     const strafe = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     this.splash = null;
     this.crouching = Boolean(input.crouch) && !this.flying;
@@ -136,6 +139,13 @@ export class Player {
       this.velocityY = Math.max(-60, this.velocityY - GRAVITY * dt);
     }
 
+    // Falling counts toward fall damage; standing, swimming, flying and ladders do not.
+    if (!this.flying && !this.onGround && !this.inWater && !this.inLava && this.velocityY < 0) {
+      this.fallDistance -= this.velocityY * dt;
+    } else if (this.onGround || this.flying || this.inWater || this.inLava) {
+      this.fallDistance = 0;
+    }
+
     const beforeY = this.velocityY;
     this.move(world, this.velocityX * dt, this.velocityY * dt, this.velocityZ * dt);
 
@@ -198,8 +208,12 @@ export class Player {
     } else {
       // Land on whatever surface is actually there: a slab's top is half a block up, not a whole
       // one, and a bed is two thirds of one.
+      const drop = this.fallDistance;
       this.y = this.groundUnder(world, this.y - dy) + epsilon;
       this.velocityY = 0;
+      // A landing ends the fall: how far it was is read once by the game, for fall damage.
+      this.landedHard = drop > 0 ? drop : 0;
+      this.fallDistance = 0;
       this.onGround = true;
     }
   }

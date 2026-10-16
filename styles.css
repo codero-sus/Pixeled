@@ -943,3 +943,176 @@ body.menu-open #game { cursor: default; }
   justify-content: flex-end;
   margin-top: 12px;
 }
+
+/* ------------------------------------------------------------------ v3.5: hearts and death */
+
+.hearts {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 20px;
+  image-rendering: pixelated;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6));
+  z-index: 6;
+}
+
+.death h2 { color: #e05a4a; }
+.death-cause { color: #e8e2d6; font-size: 15px; margin: 0 0 4px; }
+
+@media (max-width: 560px) {
+  .hearts { width: 150px; height: 15px; bottom: 96px; }
+}
+
+/* ------------------------------------------------------------------ v3.5: modes, daily, recents */
+
+.menu-shelf-title {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #cfc7b8;
+}
+
+.mode-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 2px solid #33302b;
+  border-left: 4px solid var(--mode-colour, #4f9d5b);
+  border-radius: 7px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-card:hover { background: #46423b; transform: translateY(-1px); }
+.mode-card.active { background: #4a5142; border-color: #7fce6a; }
+.mode-card .mode-icon { font-size: 18px; }
+.mode-card .mode-name { font-size: 14px; font-weight: 700; }
+.mode-card .mode-badge { font-size: 9px; letter-spacing: 0.1em; color: #b9b1a3; text-transform: uppercase; }
+.mode-card .mode-hook { font-size: 11px; color: #d6cec0; }
+
+.daily-card {
+  border: 2px solid #4c4841;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #3b3833, #34312c);
+  padding: 12px 14px;
+}
+
+.daily-head, .daily-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.daily-badge {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #f0ce55;
+}
+
+.daily-seed { font-size: 11px; color: #b9b1a3; }
+.daily-goals { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; }
+.daily-foot { font-size: 11px; color: #b9b1a3; }
+
+.daily-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ded6c6;
+}
+
+.daily-goal.done { color: #9fdc8c; text-decoration: line-through; }
+
+.recent-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.recent-chip {
+  padding: 6px 10px;
+  border: 1px solid #4c4841;
+  border-radius: 999px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recent-chip:hover { background: #46423b; border-color: #7fce6a; }
+.recent-chip small { color: #b9b1a3; margin-left: 6px; }
+
+/* HUD: which mode you are playing, and the speedrun clock. */
+.mode-chip {
+  position: fixed;
+  top: 46px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 2px solid var(--mode-colour, #4f9d5b);
+  background: rgba(20, 19, 17, 0.6);
+  color: #e8e2d6;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.run-timer {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(20, 19, 17, 0.62);
+  border: 2px solid #d0684f;
+  color: #f3e6dd;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.run-timer.finished { border-color: #7fce6a; color: #d8f5c8; }
+
+.challenge-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+
+.challenge-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #3b3833;
+  border: 2px solid #33302b;
+  font-size: 13px;
+}
+
+.challenge-row.complete { border-color: #7fce6a; background: #3f4a37; }
+.challenge-icon { text-align: center; }
+.challenge-bar {
+  display: block;
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.challenge-bar i { display: block; height: 100%; background: #7fce6a; transition: width 180ms ease-out; }
+.challenge-count { font-variant-numeric: tabular-nums; color: #ded6c6; }
+
+@media (max-width: 640px) {
+  .mode-row { grid-template-columns: repeat(2, 1fr); }
+}

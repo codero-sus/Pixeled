@@ -3,6 +3,7 @@
 import { BLOCKS, HOTBAR, blockById } from './constants.js';
 export { HOTBAR };
 import { sunHeight } from './renderer.js';
+import { formatTime } from './modes.js';
 
 /** How many of an ingredient the inventory holds, read back out of `missingFor`'s report. */
 function missingForCheck(recipe, id, missing) {
@@ -12,6 +13,18 @@ function missingForCheck(recipe, id, missing) {
   // Not in the missing list means there is enough of it: the recipe's own requirement is the floor.
   const need = recipe.needs.find(([needId]) => needId === id)?.[1] ?? 0;
   return need;
+}
+
+/** One heart, drawn inside a square of this size at this position. */
+function heartPath(context, x, y, size) {
+  const half = size / 2;
+  const top = y + size * 0.32;
+  context.beginPath();
+  context.moveTo(x + half, y + size * 0.98);
+  context.bezierCurveTo(x + size * 0.02, top + size * 0.18, x + size * 0.16, y + size * 0.04, x + half, top);
+  context.bezierCurveTo(x + size * 0.84, y + size * 0.04, x + size * 0.98, top + size * 0.18, x + half, y + size * 0.98);
+  context.closePath();
+  return context;
 }
 
 /** A 34px isometric cube: top face lighter, left face the block colour, right face shaded. */
@@ -77,6 +90,9 @@ export class Ui {
     document.getElementById('open-palette')?.addEventListener('click', () => this.paletteOpener?.());
     document.getElementById('close-palette')?.addEventListener('click', () => this.requestClosePalette());
     document.getElementById('close-craft')?.addEventListener('click', () => this.callbacks.closeCraft?.());
+    document.getElementById('respawn')?.addEventListener('click', () => this.callbacks.respawn?.());
+    document.getElementById('close-challenges')?.addEventListener('click', () => this.callbacks.closeChallenges?.());
+    document.getElementById('challenge-share')?.addEventListener('click', () => this.callbacks.shareSeed?.());
     document.getElementById('close-storage')?.addEventListener('click', () => this.callbacks.closeStorage?.());
     document.getElementById('store-held')?.addEventListener('click', () => this.callbacks.storeHeld?.());
     document.getElementById('open-craft')?.addEventListener('click', () => this.callbacks.openCraft?.());
@@ -324,6 +340,135 @@ export class Ui {
     const progress = Math.max(0, Math.min(1, 1 - remaining));
     overlay.style.opacity = String(Math.min(1, progress * 3));
     return progress;
+  }
+
+  // ------------------------------------------------------------------ modes
+
+  /** The mode chip in the corner: icon, name and the badge the card carried. */
+  setMode(chip) {
+    const element = document.getElementById('hud-mode-chip');
+    if (!element || !chip) return false;
+    element.textContent = `${chip.icon} ${chip.name}`;
+    element.title = chip.badge;
+    element.style.setProperty('--mode-colour', chip.colour);
+    element.hidden = false;
+    return true;
+  }
+
+  /** The speedrun clock, hidden for every other mode. */
+  setRunTimer(visible) {
+    const element = document.getElementById('run-timer');
+    if (!element) return false;
+    element.hidden = !visible;
+    return Boolean(visible);
+  }
+
+  setRunTime(seconds, done = null) {
+    const element = document.getElementById('run-timer');
+    if (!element) return 0;
+    element.textContent = done === null ? formatTime(seconds) : `★ ${formatTime(done)}`;
+    element.classList.toggle('finished', done !== null);
+    return seconds;
+  }
+
+  // ------------------------------------------------------------------ daily challenge
+
+  /**
+   * Fill the daily panel and the start screen card from one summary: a bar per goal, ticked when it
+   * is done, plus the streak line.
+   */
+  buildChallenges(summary, { day = '', streak = 0, best = 0, seed = 0 } = {}) {
+    const list = document.getElementById('challenge-list');
+    if (list) {
+      list.replaceChildren();
+      for (const goal of summary) {
+        const row = document.createElement('div');
+        row.className = `challenge-row${goal.complete ? ' complete' : ''}`;
+        row.dataset.goal = goal.id;
+        const percent = Math.round(goal.progress * 100);
+        row.innerHTML = `<span class="challenge-icon">${goal.icon}</span>`
+          + `<span class="challenge-text"><b>${goal.label}</b>`
+          + `<span class="challenge-bar"><i style="width:${percent}%"></i></span></span>`
+          + `<span class="challenge-count">${goal.complete ? '✓' : `${Math.min(goal.have, goal.value)}/${goal.value}`}</span>`;
+        list.append(row);
+      }
+    }
+    const streakText = streak > 0
+      ? `${streak} day streak · best ${best}`
+      : 'Finish all three today to start a streak';
+    // The same line appears on the start-screen card and in the panel, so both get written.
+    for (const id of ['challenge-streak', 'challenge-streak-panel']) {
+      const line = document.getElementById(id);
+      if (line) line.textContent = streakText;
+    }
+    const dayLabel = document.getElementById('challenge-day');
+    if (dayLabel) dayLabel.textContent = day ? `DAILY · ${day}` : 'DAILY CHALLENGE';
+    const seedLine = document.getElementById('challenge-seed');
+    if (seedLine) seedLine.textContent = String(seed);
+    this.lastChallengeSummary = summary;
+    return summary.length;
+  }
+
+  setChallenges(open) {
+    const overlay = document.getElementById('challenges');
+    if (!overlay) return false;
+    const show = Boolean(open);
+    overlay.hidden = !show;
+    overlay.classList.toggle('hidden', !show);
+    return show;
+  }
+
+  /** How many goals are ticked, for the HUD chip. */
+  challengeProgress() {
+    const summary = this.lastChallengeSummary ?? [];
+    return { done: summary.filter(goal => goal.complete).length, total: summary.length };
+  }
+
+  // ------------------------------------------------------------------ health
+
+  /**
+   * Draw the health bar: ten hearts, whole, half or empty, on the canvas in the HUD. A heart is two
+   * lobes and a point, and a half heart is the same shape clipped down the middle.
+   */
+  drawHealth(canvas = document.getElementById('hearts'), health = null) {
+    if (!canvas || !canvas.getContext) return 0;
+    const context = canvas.getContext('2d');
+    if (!context) return 0;
+    const points = health?.points ?? 20;
+    const size = canvas.width / 10;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < 10; index++) {
+      const fill = Math.max(0, Math.min(1, (points - index * 2) / 2));      // 0, 0.5 or 1
+      heartPath(context, index * size, 0, size);
+      context.fillStyle = 'rgba(20, 14, 16, 0.55)';
+      context.fill();
+      if (fill > 0) {
+        context.save();
+        context.beginPath();
+        context.rect(index * size, 0, size * fill, size);                    // clip to the fill
+        context.clip();
+        heartPath(context, index * size, 0, size);
+        context.fillStyle = points <= 6 ? '#e05a4a' : points <= 12 ? '#e0a03a' : '#e0405c';
+        context.fill();
+        context.restore();
+      }
+      heartPath(context, index * size, 0, size);
+      context.strokeStyle = 'rgba(12, 8, 9, 0.8)';
+      context.lineWidth = 1;
+      context.stroke();
+    }
+    return 10;
+  }
+
+  setDeath(open, cause = '') {
+    const overlay = document.getElementById('death');
+    if (!overlay) return false;
+    const show = Boolean(open);
+    overlay.hidden = !show;
+    overlay.classList.toggle('hidden', !show);
+    const message = document.getElementById('death-cause');
+    if (message && cause) message.textContent = cause;
+    return show;
   }
 
   // ------------------------------------------------------------------ hotbar

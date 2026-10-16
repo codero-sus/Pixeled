@@ -52,12 +52,14 @@ export function shapeBoxes(block, meta = 0, connect = () => false) {
       return [box(0, 0, 0.0625, thin, 1, 0.9375)];
     }
     case 'door': {
-      // An open door is the closed door swung a quarter turn, which is a swap of its axes.
-      const open = (meta & 1) === 1;
+      // An open door is the closed door swung a quarter turn, which is a swap of its axes. Bit 1 of
+      // the metadata says which side it swings to, so the open leaf ends up flat against the frame
+      // instead of floating in the middle of the doorway.
       const t = 0.0625;
-      return open
-        ? [box(0.5 - t, 0, 0.0625, 0.5 + t, 1, 0.9375)]
-        : [box(0.0625, 0, 0.5 - t, 0.9375, 1, 0.5 + t)];
+      if ((meta & 1) === 0) return [box(0.0625, 0, 0.5 - t, 0.9375, 1, 0.5 + t)];
+      return (meta & 2)
+        ? [box(1 - t, 0, 0.0625, 1, 1, 0.9375)]
+        : [box(0, 0, 0.0625, t, 1, 0.9375)];
     }
     case 'chest':
       return [

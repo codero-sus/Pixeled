@@ -120,6 +120,18 @@ assert.match(terrainVertex, /uTime/, 'and the wave is animated');
 assert.match(terrainVertex, /uWater > 0\.5/, 'water gets its own wave shape');
 assert.match(terrainVertex, /uWaving > 0\.5/, 'plants sway only when the plant pass asks them to');
 
+// --- water: waves in the vertex stage, fresnel and glitter in the fragment stage
+const seaFragment = shaders.get('TERRAIN_FRAGMENT');
+assert.match(terrainVertex, /varying\s+float\s+vWater/, 'the water flag crosses to the fragment stage');
+assert.match(seaFragment, /varying\s+float\s+vWater/, 'and is read there');
+assert.match(terrainVertex, /world\.y\s*\+=\s*sin\(uTime/, 'waves move the water surface over time');
+assert.match(seaFragment, /vWater > 0\.5 && vNormal\.y > 0\.5/, 'only the top of the water catches the light');
+assert.match(seaFragment, /fresnel/, 'the surface has a fresnel rim');
+assert.match(seaFragment, /glitter/, 'and a sun glitter');
+assert.match(seaFragment, /crest/, 'and a foam crest');
+assert.match(seaFragment, /uniform\s+vec3\s+uFogColor,\s*uSunDirection,\s*uCamera/, 'the fragment stage can see the eye');
+assert.match(seaFragment, /uniform[^;]*uTime/, 'and the clock, so the ripples move');
+
 // --- the sky shader keeps the sun, moon and clouds the renderer draws
 const skyFragment = shaders.get('SKY_FRAGMENT');
 assert.match(skyFragment, /uZenith/, 'the sky has a zenith colour');

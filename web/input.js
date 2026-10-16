@@ -56,6 +56,7 @@ export class Input {
       if (code === 'F5') { event.preventDefault?.(); this.callbacks.toggleCamera?.(); return; }
       // C and E are useful with a panel open too (C closes the crafting sheet, E closes a chest).
       if (code === 'KeyC') { this.callbacks.toggleCraft?.(); return; }
+      if (code === 'KeyJ') { this.callbacks.toggleChallenges?.(); return; }
       if (code === 'Escape' || (!this.enabled && code !== 'KeyE')) return;
       if (!this.enabled) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) event.preventDefault();

@@ -213,6 +213,17 @@ export class Audio {
 
   select() { this.blip(720, 0.045, 'sine', 0.02); }
 
+  /** A short low thud when something hurts you, and a longer one when it finishes the job. */
+  hurt() { this.sweep(320, 140, 0.18, 0.05, 'square'); }
+
+  die() { this.sweep(260, 70, 0.75, 0.06, 'triangle'); }
+
+  heal() { this.chime([784, 988]); }
+
+  craftSound() { this.blip(660, 0.06, 'triangle', 0.03); this.blip(880, 0.08, 'sine', 0.02); }
+
+  sleep() { this.sweep(420, 180, 0.9, 0.04, 'sine'); }
+
   /** Birdsong: a couple of short chirps whose pitch follows the biome. */
   birds(biome = 'plains') {
     const base = { forest: 2100, plains: 2400, desert: 1700, snow: 1900, savanna: 1850, swamp: 1500, mountains: 2300 }[biome] ?? 2200;

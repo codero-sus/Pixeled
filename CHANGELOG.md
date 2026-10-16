@@ -1,11 +1,339 @@
 # Pixeled — changelog
 
-*(Newest batch first after the intro. Batch two continues the numbering at 194.)*
+*(Newest batch first after the intro. Batch two continues the numbering at 194; batch three at 282.)*
 
 Numbered, and counted honestly: every line below is a discrete change that shipped in the commit next
-to it, and every one of them is covered by the test suites (`tests/web_smoke.mjs` 257 checks,
-`tests/web_dom_smoke.mjs` 87, `tests/web_shaders.mjs` 47, `tests/python_smoke.py` 25, plus the Java
-reference check). No padding, no round numbers invented after the fact.
+to it, and every one of them is covered by the test suites (`tests/web_smoke.mjs` 715 checks,
+`tests/web_dom_smoke.mjs` 219, `tests/web_shaders.mjs` 56, `tests/python_smoke.py` 25 checks, plus the
+Java reference check over 24 files and 27 classes). No padding, no round numbers invented after the
+fact. Batch three runs to 528.
+
+## v3.5 — modes, the daily challenge and the living sea
+
+*(Continues the numbering. Batch three's second half.)*
+
+### Game modes — 393-411
+
+393. `web/modes.js`: four modes, each a small record of rules rather than a fork of the game
+394. Survival: the game as it was — health on, blocks cost inventory, mining takes time
+395. Creative: infinite blocks, flight, instant mining, and damage switched off
+396. Sandbox: a flat world, free blocks and flight, but mining still takes as long as it should
+397. Speedrun: the survival rules plus a clock and a finish line
+398. `modeById` falls back to survival, so a save from a mode that no longer exists still loads
+399. `randomModeId` for "surprise me", weighted 50% toward survival so the surprise stays playable
+400. `setMode` applies the rules to the live player mid-game — no restart, no second code path
+401. Creative flight turns on the moment the mode does, and off again when you switch back
+402. Instant mining only shortens the dig timer; breaking still emits a particle burst and a sound
+403. Placing blocks in creative and sandbox never spends inventory
+404. `invulnerable` is a mode rule: a creative player standing in lava simply does not burn
+405. Mode cards on the start screen: icon, name, one-line description, a colour and a badge
+406. The cards are a real radio group — `role="radiogroup"`, `aria-checked`, keyboard reachable
+407. Clicking a card switches mode immediately, and `setMode` repaints the shelf so exactly one card
+     is ever marked active, whichever route the switch came from
+408. The HUD carries a small mode chip with the mode's colour and its badge as the tooltip
+409. `pickMode` offers to move you into a flat world when the new mode needs one
+410. Speedrun shows a stopwatch in the corner, hidden in every other mode
+411. The clock counts in tenths, and a finished run gets a star and a green edge
+
+### Daily challenge — 412-433
+
+412. `web/challenges.js`: the daily challenge is derived, never stored as a list of days
+413. `todayKey` reads the local date, so "today" is the player's today, not UTC's
+414. `hashString` gives a stable 32-bit hash of any string, used as the day's source of randomness
+415. `dailySeed(key)` maps a day to a world seed in the 1000-901000 range
+416. Ten goals in the catalogue, each a small pure function over the game's stats
+417. `mine-30`, `place-20` and `walk-150`: the everyday ones
+418. `torch-2`, `tree-1`, `craft-2`: the ones that send you to the crafting panel
+419. `diamond-1`: the long shot
+420. `depth-14`: reach y 14, which means an actual mine shaft rather than a poke at the ground
+421. `night-1` and `fish-or-swim`: survive a dawn, and get properly wet
+422. Three goals a day, chosen by hashing the day key — the same three for everyone, all day
+423. `goalProgress` and `goalComplete` are pure, so the UI and the tests derive progress the same way
+424. Stats are read from the tally the game already keeps; nothing new is counted per frame
+425. Completing a goal toasts once and is written down once
+426. The panel (J) shows one row per goal with a progress bar and the count
+427. Finishing all three extends a streak; a missed day resets it to one and keeps the best
+428. `previousKey` walks back a day properly, including across month and year boundaries
+429. The streak, the best streak and today's completions all survive a reload
+430. A teaser card on the start screen lists today's three goals with the day's seed
+431. `Play today's world` drops you straight into the daily seed
+432. The seed is copyable from the panel and from the pause menu — one link, one world
+433. The start screen card carries the day's date, so the three goals are never ambiguous
+
+### Seeded worlds and the shelf — 434-451
+
+434. `startWorld(seed, mode)` is now the single path for the seed box, the daily challenge, surprise
+     and the recent shelf: four entry points, one code path
+435. `New world` always picks a fresh random seed — no cached world, no repeated terrain
+436. `?seed=1234` in the URL opens that exact world, which is what the share button hands out
+437. The seed box accepts a number, a pasted link's number, or nothing at all
+438. The recent-worlds shelf remembers your last four worlds, newest first
+439. The shelf de-duplicates by seed, so replaying a world moves it to the front instead of listing it
+     twice
+440. Each chip remembers the mode that world was played in
+441. Clicking a chip reopens that world in that mode
+442. The shelf hides itself, heading and all, when there is nothing on it
+443. "Surprise me" picks a random mode and a random seed in one press
+444. Surprise returns the mode id, so the HUD, the shelf and the toast agree on what happened
+445. The flat-world generator (sandbox): obsidian floor, stone below, dirt, grass at y 28
+446. Flat worlds flood the whole map with daylight and no sea, so building is unobstructed
+447. Flat worlds still grow hashed trees, plants and the odd pumpkin — flat, not empty
+448. `surfaceHeight` and `biomeAt` short-circuit in flat mode, so nothing samples noise for nothing
+449. A flat world reports itself ready immediately: no spawn search, no waiting
+450. Starting a world resets the clock, the weather, the particles and the dig timers together
+451. The seed is written into the save, so a reload lands you in the same place
+
+### The sea — 452-462
+
+452. Water's vertex stage adds two offset waves, so the surface is never flat
+453. The waves drop the surface a little, so a full cube of water reads as liquid
+454. The fragment stage re-derives a normal from the same two waves, so the highlights ride the swell
+455. Fresnel rim: water goes pale and sky-coloured at grazing angles
+456. Sun glitter: a tight specular lobe where the sun's reflection lines up with the eye
+457. A foam crest on the steep part of the swell
+458. Only the top face of water takes any of it — the sides stay deep and blue
+459. Ripples are seeded by world position, so they are stable for a given spot rather than sliding
+460. Underwater, tint mode 3 draws moving caustics instead of a plain blue wash
+461. Rain splash: droplets kicked up where rain meets a surface near the player
+462. The splash skips water — the pond is already wet — and scales with the intensity
+
+### The held block — 463-469
+
+463. The view model reads `shapeBoxes`, the same helper the mesher and the physics use
+464. A held slab is a slab: the hand's cube is squeezed to the shape's box
+465. A held fence post is a stick, a held pane is a wafer, a held ladder a plate
+466. A two-box block (chest, bed, door) draws both boxes in the hand
+467. The hand's last-placed orientation comes from the world's metadata, so a held stair matches the
+     one you just put down
+468. `offsetHeldModel` reshapes the cube inside the hand's rigid transform, so swinging, bobbing and
+     tilting all keep working
+469. The maths is tested by transforming the box's three edge vectors, not by eyeballing a screenshot
+
+### Saves that keep the world — 470-481
+
+470. The save now carries the metadata: a door left open comes back open
+471. And the chests, stack by stack
+472. And the backpack, block by block
+473. Chest contents are written as plain objects and read back into Maps, one chest per cell
+474. An older save without the new fields still loads: no metadata, no backpack, no error
+475. A save with a corrupt chest entry cannot inject phantom cells into the world
+476. Stack counts and ids are sanitised on load — nothing negative, nothing below id 1
+477. `chestAt` refuses cells outside the world instead of filing a chest under `NaN`
+478. `BrowserSave.get/set/remove` for the small side-keys, so the daily and the recent shelf have a
+     home that is not the world save
+479. Side-keys store strings untouched and JSON for everything else, so callers own their own shape
+480. A blocked or private-mode storage returns false instead of throwing at the first write
+481. The save is exercised end to end in the suite: place, fill, save, reload, count the diamonds
+
+### Interface and shell — 482-495
+
+482. `#hud-mode-chip` in the HUD, hidden until a mode says otherwise
+483. `#run-timer` for the speedrun clock
+484. `#menu-surprise`, `#mode-row`, `#daily-card`, `#daily-goals`, `#recent-row` and `#recent-title` on
+     the start screen
+485. `#challenges` panel with `#challenge-list`, the day badge, the seed, the streak line, a share
+     button and a close button
+486. The version line reads v3.5
+487. J opens the daily panel, and `input.js` passes the key through like every other shortcut
+488. The panel closes on its own button, on Escape, and on the rule that only one overlay is ever up
+489. Stylesheet: `.mode-card`, the active card, the badge, the chip, the stopwatch
+490. Stylesheet: `.daily-card`, `.daily-badge`, `.daily-goals`, the chips and their ticks
+491. Stylesheet: `.recent-row`/`.recent-chip`, with the heading collapsing when the row is empty
+492. Stylesheet: `.challenge-row`, `.challenge-bar`, the completed state and the streak line
+493. The panel id for the streak was split into `#challenge-streak` (card) and
+     `#challenge-streak-panel` (panel) — two elements may not share one id
+494. `ui.setMode`, `ui.setRunTimer`, `ui.setRunTime`, `ui.buildChallenges`, `ui.challengeProgress`
+495. Mobile rules for the new shelves, cards and panel, so the modes fit a phone's width
+
+### Tests for the GameZ batch — 496-521
+
+496. Mode rules: every mode's flags asserted one by one
+497. `modeById` fallback and `randomModeId` weighting over many draws
+498. `setMode` against the live game: flight, instant mining, free blocks and invulnerability each
+     observed, not assumed
+499. The mode shelf renders one card per mode, exactly one active, and clicks report the right id
+500. Daily: `todayKey` shape, `dailySeed` range and stability
+501. The same day always yields the same three goals; the day after is a different three
+502. `previousKey` across a month boundary and a year boundary
+503. `goalProgress` clamping, `goalComplete` boundaries, and every goal's `.of()` stat
+504. Completing all three in the live game ticks the streak on and toasts once
+505. The daily panel renders progress bars against the real DOM stub
+506. The start screen's teaser lists the same three goals the panel does
+507. A save written from the live game is read back inside the same run: seed, meta, chests, backpack
+508. Reloading from that save brings back the open door, the diamonds and the stone
+509. Corrupt-save guards: a littered chest map keeps only the sane stacks
+510. `chestAt(NaN)`, `chestAt(-1, …)` and an out-of-range cell all return null
+511. The recent shelf: empty, one entry, de-duplication by seed, and the heading hiding with it
+512. Clicking a recent chip reopens exactly that world in exactly that mode
+513. `surprise()` returns a real mode id and switches the live game to it
+514. Flat worlds: surface at 28, obsidian floor, no sea, daylight at the surface
+515. Flat worlds still carry trees and plants
+516. Water shader lint: the water flag crossing both stages, the wave, the fresnel, the glitter, the
+     crest, and the uniforms the fragment stage needs
+517. Held-shape maths: a whole block fills the hand cube, a slab keeps its footprint and half its
+     height, a chest is two boxes, a fence post is a narrow stick
+518. Physics on shapes: a slab's top at 31.5, stairs at 32, and landings measured from the drop
+519. `metaAt` inside and outside the world
+520. Water flow in a walled channel: six cells flood in order, and the source is not consumed
+521. Ten more assertions on the DOM for the new ids, the ARIA wiring and the CSS hooks
+
+### Fixes found while testing — 522-528
+
+522. `surprise()` returned `mode.name` where callers expected the id — the toast was right, the shelf
+     was not
+523. The mode shelf was rebuilt in two places and could show two active cards; `setMode` owns it now
+524. The test DOM stubs had no relationship between `className` and `classList`, so class assertions
+     read `undefined` — both stubs now keep the two views of one set in step, like a browser
+525. A save fixture written with `JSON.stringify(new Map(...))` silently became `{}` — the test now
+     writes real JSON files, which is also what the game writes
+526. A test placed a block at `PAD.h + 1`, a property that does not exist: `NaN` coordinates created a
+     phantom chest at "NaN,NaN,NaN" and proved `chestAt` needed its guard
+527. A held-block test compared a rotated corner against a world axis; the assertions now compare edge
+     vectors, which is rotation-independent
+528. A daily-goal test moved the challenge counters but not the game tally that feeds them, so goals
+     that read the tally looked complete while the ones that read the stats did not
+
+## v3.4 — shapes, interaction, crafting and health
+
+*(Continues the numbering. Batch three's first half.)*
+
+### Blocks and shapes — 282-303
+
+282. Ten new blocks: smooth stone, stone bricks, iron block, gold block, diamond block, birch planks,
+     spruce planks, glass pane, fence and ladder (ids 33-42)
+283. Door (43), chest (44) and bed (45): interactive blocks with shapes of their own
+284. Slab (46), stairs (47) and bookshelf (48), taking the block list to 49
+285. New `web/shapes.js`: one source of truth for partial-block geometry
+286. `shapeBoxes(block, meta, connect)`: every shape is a list of cell-local boxes
+287. A full cube is one box from 0 to 1, so nothing special-cases the common block
+288. Slab: a single box 0-0.5 tall
+289. Stairs: a lower step plus an upper half on the facing side
+290. Fence: a 0.375-0.625 post, plus rails that only appear when the neighbour is fence-like
+291. Pane: a 0.4375-0.5625 wafer, crossed when both axes connect
+292. Ladder: a 0.16 plate flat against the wall it was hung on, chosen by metadata
+293. Door: a closed plate 0.4375-0.5625, or the same swung a quarter turn when open
+294. Chest: a body to 0.82 with a lid on top, in the block's own colours
+295. Bed: a 0.45 mattress with a pillow end, so it reads as a bed from above
+296. The mesher draws shapes from `shapeBoxes`, so the picture and the collision agree by construction
+297. Collision is shape-aware: `cellBoxes`, `overlapsSolid`, `surfaceUnder`, `blockTop`
+298. `standingHeight` and `tallestTop` answer "can I stand here" from the same boxes
+299. Walking onto a slab steps up half a block instead of being blocked
+300. Shapes carry a +0.0001 epsilon so a standing height is never defeated by floating point
+301. Metadata nibble per cell: door open, stair facing, ladder side, bed pillow
+302. `metaEdits` tracks only the metadata the player changed, so a save stays small
+303. Shape-aware block highlighting and crack overlay: a slab's outline is half a block tall
+
+### Interaction — 304-322
+
+304. E interacts with whatever the crosshair is on
+305. Doors swing open and shut, and the open bit lives in the cell's metadata
+306. A door's collision follows it: an open door is a wall across the other axis
+307. Chests open a panel listing their stacks
+308. `world.chests`: one Map per chest cell, created on demand
+309. Take one out of a chest into the backpack, and put one back from the backpack
+310. The take/store buttons carry the counts, so a nearly-empty chest is obvious
+311. Breaking a chest spills its contents into the inventory, so nothing is lost by accident
+312. Beds sleep the night away — at night only, with a toast that says why not
+313. Sleeping fades the screen to black, runs the clock forward and clears the weather
+314. Ladders are climbable: hold into them and you go up, slowly, with a slower fall
+315. `placeBlock(x, y, z, id, { yaw, face, replace })` is the one way a block enters the world
+316. `yawToFacing` turns the player's heading into a stair or ladder facing
+317. `wallFromNormal` hangs a ladder on the wall you were looking at, or the nearest neighbour
+318. A door remembers which way it swings from the face you placed it against
+319. Placement refuses a cell that is occupied, a block that is not placeable, and a cell outside the
+     world
+320. Standing where a block would go is refused with a toast rather than a fit of jitter
+321. Placing or breaking wakes the neighbouring water, so a hole does not leave a dry pocket
+322. `interact()` returns null when a use is refused, so callers can tell "nothing here" from "no"
+
+### Crafting — 323-335
+
+323. `web/crafting.js`: pure functions over a Map of id to count
+324. 19 recipes, from planks out of a log to a bed out of planks and leaves
+325. `canCraft`, `craftable`, `missingFor`, `craft`, `recipesUsing`, `countOf`, `addTo`, `spend`
+326. `craft` returns the result instead of mutating behind the caller's back
+327. `spend` refuses to go negative and answers with whether it could pay
+328. The crafting panel lists every recipe with its ingredients
+329. Ingredients show how many you have, and how many short you are
+330. Recipes you can afford are highlighted; the rest say what is missing
+331. Crafting a stack adds all of it at once (four planks, three ladders, eight panes)
+332. The backpack summary at the top of the panel lists what you are carrying
+333. Crafting plays its own sound, and the panel refreshes after each craft
+334. The palette's craft button opens the panel, and the palette refreshes its counts afterwards
+335. Recipe tests: affordability, the exact missing list, and no negative counts after a spend
+
+### Water that moves — 336-345
+
+336. Water flows: breaking a wall next to a lake lets the water in
+337. A bounded queue, so a hole in the ocean floor cannot stall the frame
+338. Water spreads down first, then sideways — the shape you expect
+339. Flow stops after a distance limit from the source instead of flooding the world
+340. `waterLevel` reads how deep a cell is, from the surface down
+341. Placing a block in water displaces it and re-queues the neighbours
+342. Breaking a block under water wakes the cell above it
+343. Water is drawn translucent with a wave, so a pool reads as water rather than blue stone
+344. The flow test builds a walled channel and floods it deterministically
+345. Water is non-solid: you swim in it, sink slowly, and cannot stand on it
+
+### Health, damage and death — 346-360
+
+346. `web/health.js`: 20 points, ten hearts, one model for every source of damage
+347. A 0.6-second mercy window after each hit, so lava does not delete you in three frames
+348. `hurt(amount, cause)` records the cause for the death screen
+349. Fall damage: three blocks are free, then a point per block above that
+350. Lava burns for as long as you are in it, and the screen washes orange in proportion
+351. Drowning: the breath meter empties, then the health starts going
+352. The void floor hurts, so falling out of the world is not an escape
+353. Regeneration waits seven seconds after the last hit, then returns a heart every 2.4 seconds
+354. `heal` and `taken` counters, used by the HUD and the tests
+355. Ten hearts drawn as canvas paths, filled per half-heart
+356. The health bar goes down in halves, so a small fall is a visible scratch
+357. Hearts desaturate and pulse when you are low, and there is a heartbeat in the HUD
+358. Death: the world stays lit behind a translucent panel naming the cause
+359. Death messages per cause, picked deterministically so the same death reads the same
+360. Respawn puts you back at the spawn point at full health, keeping your backpack
+
+### Fall tracking and the world under your feet — 361-368
+
+361. `player.fallDistance` accumulates on the way down and resets on landing
+362. `landedHard` is read once per frame, so one landing is one hit
+363. Falling into water cancels the damage, as it should
+364. Landing dips the camera, on the same event the damage uses
+365. Feet probe fixed at `y + 0.1` with the column cached, so standing on a shape is stable
+366. `surfaceUnder` scans down to `WORLD_Y - 1` instead of giving up early
+367. Walking on a pad whose surface cell is air is no longer possible to fake
+368. A ten-block fall lands exactly on the surface — measured, not estimated
+
+### Sky, weather and atmosphere — 369-380
+
+369. A sun disc with a halo, tracking the sun direction
+370. A moon opposite the sun, with the crescent carved by a smoothstep
+371. Two planets that only appear once the night sets in
+372. Aurora curtains: three drifting bands, tied to the night value
+373. Stars that fade in with the dark instead of appearing all at once
+374. A two-layer cloud deck, with a storm switch that greys the sky out
+375. `skyPalette(clock)` hands the renderer the moon direction and the aurora strength along with the
+     colours
+376. Fog follows the time of day: it takes its colour from the sky palette, so dusk fogs orange
+377. Aurora shows up only in the snow and mountain biomes, only after dark, raised by the caller
+378. Underwater, the fog closes from 2 to 26 blocks and turns blue
+379. Rain splashes on the ground next to you (see 461)
+380. Snow, rain and thunder share one weather front model, and the weather survives a save
+
+### Interface and shell — 381-392
+
+381. Palette overlay (B) with every placeable block and the counts you own
+382. Palette picking fills the selected hotbar slot instead of a fixed one
+383. Craft panel (C) with the recipe book and the backpack summary
+384. Storage panel: a chest's contents with take-one buttons
+385. Sleep overlay: the black fade, with a line saying the night is passing
+386. `#open-craft` became `#palette-craft`, because the button lives on the palette
+387. The help sheet gained E, C and the shaped-block notes
+388. Every overlay toggles through one `.hidden` class, with a stylesheet rule that actually wins
+389. Mobile media query for the panels, the hearts and the new buttons
+390. Version line to v3.4, and the README's block count corrected
+391. Tests: 121 new DOM assertions for the overlays the panels drive
+392. Every new module (`shapes.js`, `crafting.js`, `health.js`) is pure enough to test on its own
 
 ## v3.3 — light, lava and the living world
 
@@ -115,7 +443,7 @@ reference check). No padding, no round numbers invented after the fact.
 
 ## v3.2 — the first big batch (commit `76f39c1`)
 
-### World and blocks — 1-42
+### World and blocks — 1-44
 
 1. Coal ore block (id 11), depth-banded to y ≤ 40
 2. Iron ore block (id 12), y < 26
