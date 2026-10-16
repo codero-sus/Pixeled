@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Pixeled — 3D block sandbox</title>
+<meta name="description" content="A first-person 3D voxel sandbox that runs in your browser. A new random world every time.">
+<meta name="theme-color" content="#0d1b2a">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="game-shell">
+  <canvas id="game" aria-label="3D block world. Click to play. WASD to move, Space to jump, left click to mine, right click to build."></canvas>
+
+  <!-- ------------------------------------------------------------- heads-up display -->
+  <div class="hud">
+    <div class="panel stats">
+      <div class="brand">PIXELED<span>3D</span></div>
+      <dl>
+        <div><dt>fps</dt><dd id="hud-fps">—</dd></div>
+        <div><dt>xyz</dt><dd id="hud-position">—</dd></div>
+        <div><dt>biome</dt><dd id="hud-biome">—</dd></div>
+        <div><dt>time</dt><dd id="hud-clock">—</dd></div>
+        <div><dt>mode</dt><dd id="hud-mode">WALKING</dd></div>
+        <div><dt>sky</dt><dd id="hud-weather">clear</dd></div>
+        <div><dt>light</dt><dd id="hud-light">15</dd></div>
+        <div><dt>facing</dt><dd id="hud-facing">north</dd></div>
+        <div><dt>mined</dt><dd id="hud-mined">0</dd></div>
+        <div><dt>walked</dt><dd id="hud-walked">0 m</dd></div>
+        <div><dt>edits</dt><dd id="hud-edits">0</dd></div>
+      </dl>
+      <button class="seed" id="copy-seed" type="button" title="Copy a link to this world">
+        seed <span id="hud-seed">—</span>
+      </button>
+    </div>
+
+    <div class="actions">
+      <button id="open-palette" type="button" title="Blocks (B)">▦</button>
+      <button id="toggle-sound" type="button" title="Sound on or off">♪</button>
+      <button id="toggle-fly" type="button" title="Fly (F)">✈</button>
+      <button id="open-help" type="button" title="Controls (H)">?</button>
+      <button id="open-menu" type="button" title="Menu (Esc)">☰</button>
+      <button id="toggle-fullscreen" type="button" title="Fullscreen">⛶</button>
+      <button id="new-world" type="button" class="primary" title="Generate a brand new random world">↻ New world</button>
+    </div>
+
+    <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
+    <div class="target-label" id="target-label" aria-hidden="true"></div>
+    <div class="breath" id="breath" hidden><i id="breath-fill"></i></div>
+    <canvas class="hearts" id="hearts" width="200" height="20" aria-label="Health"></canvas>
+
+    <div class="start-hint" id="start-hint">
+      <b>Click to play</b>
+      <span>WASD move · Space jump · left click mine · right click build · F to fly</span>
+    </div>
+
+    <div class="mode-chip" id="hud-mode-chip" hidden></div>
+    <div class="run-timer" id="run-timer" hidden>0:00.0</div>
+    <canvas class="minimap" id="minimap" width="96" height="96" aria-label="Map of nearby terrain"></canvas>
+
+    <pre class="debug hidden" id="debug" hidden aria-live="off"></pre>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="hotbar" id="hotbar" role="toolbar" aria-label="Blocks"></div>
+    <div class="selected" id="selected-block">Grass</div>
+    <button class="bag" id="bag" type="button" hidden aria-label="What you are carrying, click to eat"></button>
+
+    <!-- touch controls, shown on phones and tablets -->
+    <div class="joystick" id="joystick"><div class="joystick-knob" id="joystick-knob"></div></div>
+    <div class="touch-controls">
+      <button class="touch-button wide" data-touch-action="mine" type="button">MINE</button>
+      <button class="touch-button wide" data-touch-action="place" type="button">PLACE</button>
+      <button class="touch-button round" data-touch-action="jump" type="button">↑</button>
+      <button class="touch-button wide" data-touch-action="use" type="button">USE</button>
+      <button class="touch-button wide" data-touch-action="eat" type="button">EAT</button>
+      <button class="touch-button round" data-touch-action="fly" type="button">✈</button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- start screen -->
+  <div class="overlay menu hidden" id="menu">
+    <div class="menu-wash" aria-hidden="true"></div>
+    <section class="menu-card">
+      <header class="menu-head">
+        <h1 class="menu-logo" id="menu-title">PIXELED</h1>
+        <p class="menu-splash" id="menu-splash">A brand new world every time!</p>
+      </header>
+      <p class="menu-subtitle" id="menu-subtitle">A first-person 3D block sandbox.</p>
+
+      <div class="menu-buttons">
+        <button class="menu-button primary" id="menu-play" type="button">
+          <span class="menu-button-label" id="menu-play-label">Play</span>
+          <span class="menu-button-sub" id="menu-play-sub">Start building</span>
+        </button>
+        <button class="menu-button" id="menu-continue" type="button" hidden>
+          <span class="menu-button-label">Continue</span>
+          <span class="menu-button-sub" id="menu-continue-sub">Saved world</span>
+        </button>
+        <button class="menu-button" id="menu-fresh" type="button">
+          <span class="menu-button-label">New world</span>
+          <span class="menu-button-sub">Roll another random seed</span>
+        </button>
+        <button class="menu-button" id="menu-surprise" type="button">
+          <span class="menu-button-label">Surprise me</span>
+          <span class="menu-button-sub">Random seed, random mode, straight in</span>
+        </button>
+        <button class="menu-button" id="menu-seed-toggle" type="button">
+          <span class="menu-button-label">Play a seed…</span>
+          <span class="menu-button-sub">Replay a world you liked</span>
+        </button>
+        <div class="menu-seed-row" id="menu-seed-row" hidden>
+          <input id="menu-seed-input" type="text" inputmode="numeric" autocomplete="off" placeholder="seed, e.g. 2408" aria-label="World seed">
+          <button class="menu-go" id="menu-seed-go" type="button">Go</button>
+        </div>
+        <div class="menu-small">
+          <button class="menu-chip" id="menu-help" type="button">How to play</button>
+          <button class="menu-chip" id="menu-settings" type="button">Settings</button>
+          <button class="menu-chip" id="menu-sound" type="button">Sound: on</button>
+        </div>
+        <div class="settings-panel hidden" id="settings-panel" hidden aria-label="Settings"></div>
+
+        <h2 class="menu-shelf-title">Pick a mode</h2>
+        <div class="mode-row" id="mode-row" role="radiogroup" aria-label="Game mode"></div>
+
+        <h2 class="menu-shelf-title">Today's challenge</h2>
+        <div class="daily-card" id="daily-card">
+          <div class="daily-head">
+            <span class="daily-badge" id="challenge-day">DAILY CHALLENGE</span>
+            <span class="daily-seed">seed <b id="challenge-seed">—</b></span>
+          </div>
+          <div class="daily-goals" id="daily-goals"></div>
+          <div class="daily-foot">
+            <span id="challenge-streak">Finish all three today to start a streak</span>
+            <button class="menu-chip" id="menu-daily" type="button">Play today's seed</button>
+          </div>
+        </div>
+
+        <h2 class="menu-shelf-title" id="recent-title" hidden>Recent worlds</h2>
+        <div class="recent-row" id="recent-row"></div>
+      </div>
+
+      <footer class="menu-foot">
+        <span class="menu-seedline" id="menu-world">seed —</span>
+        <span class="menu-controls" id="menu-controls">WASD walk · Space jump · left click mine · right click build · F fly</span>
+      </footer>
+    </section>
+    <div class="menu-version" id="menu-version">Pixeled 3D · v3.6 · 49 blocks · 4 modes · daily seeds · craft, sleep, eat</div>
+  </div>
+
+  <!-- ------------------------------------------------------------- block palette -->
+  <div class="overlay modal palette hidden" id="palette" hidden>
+    <section class="card wide">
+      <h2>Blocks</h2>
+      <p class="palette-hint">Pick a block to put in the selected hotbar slot. The number is how many you have dug up.</p>
+      <div class="palette-grid" id="palette-grid" role="listbox" aria-label="Placeable blocks"></div>
+      <div class="modal-actions">
+        <button class="ghost-button" id="palette-craft" type="button">Craft…</button>
+        <button class="primary-button" id="close-palette" type="button">Done <span>→</span></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ------------------------------------------------------------- loading screen -->
+  <div class="overlay loading" id="loading">
+    <div class="card">
+      <h1>Pixeled <span>3D</span></h1>
+      <p id="loading-text">Generating a brand new world…</p>
+      <div class="bar"><i id="loading-bar"></i></div>
+      <small>Every world is different: hills, caves, ores, forests, deserts and snowy peaks are all rolled fresh from a random seed.</small>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------- help sheet -->
+  <div class="overlay modal hidden" id="craft" hidden>
+  <div class="panel wide">
+    <h2>Crafting</h2>
+    <p class="muted">Ingredients come out of your backpack. Dig logs, stone and ore, then build something better.</p>
+    <div class="inv-row" id="craft-inventory"></div>
+    <div class="craft-list" id="craft-list"></div>
+    <div class="modal-actions">
+      <button class="button" type="button" id="close-craft">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay modal hidden" id="storage" hidden>
+  <div class="panel">
+    <h2>Chest</h2>
+    <p class="muted" id="storage-held"></p>
+    <div class="palette-grid" id="storage-grid"></div>
+    <p class="empty-note" id="storage-empty">This chest is empty.</p>
+    <div class="modal-actions">
+      <button class="button ghost" type="button" id="store-held">Store one</button>
+      <button class="button" type="button" id="close-storage">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="sleep" id="sleep" hidden></div>
+
+<div class="overlay modal hidden" id="challenges" hidden>
+  <section class="card">
+    <h2>Daily challenge</h2>
+    <p class="muted">One world, three goals, the same for everyone playing today. Press <kbd>J</kbd> to peek.</p>
+    <div class="challenge-list" id="challenge-list"></div>
+    <div class="daily-foot">
+      <span id="challenge-streak-panel">—</span>
+      <button class="ghost-button" id="challenge-share" type="button">Copy seed link</button>
+    </div>
+    <div class="modal-actions">
+      <button class="button" id="close-challenges" type="button">Done</button>
+    </div>
+  </section>
+</div>
+
+<div class="overlay modal death hidden" id="death" hidden>
+  <section class="card">
+    <h2>You died</h2>
+    <p class="death-cause" id="death-cause">You took a beating</p>
+    <p class="muted">Everything you were carrying is still in your bag. Respawn at your spawn point and carry on.</p>
+    <button class="primary-button" id="respawn" type="button">Respawn <span>→</span></button>
+  </section>
+</div>
+
+<div class="overlay modal hidden" id="help-modal" hidden>
+    <section class="card">
+      <h2>How to play</h2>
+      <div class="help-grid">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Walk around</span></div>
+        <div><kbd>Space</kbd><span>Jump (or fly up)</span></div>
+        <div><kbd>Shift</kbd><span>Sprint (or fly down)</span></div>
+        <div><kbd>F</kbd><span>Toggle flying</span></div>
+        <div><kbd>Left click</kbd><span>Mine the block you are aiming at</span></div>
+        <div><kbd>Right click</kbd><span>Build with the selected block</span></div>
+        <div><kbd>1</kbd>–<kbd>9</kbd><span>Choose a block, or scroll</span></div>
+        <div><kbd>Middle click</kbd><span>Pick the block you are looking at</span></div>
+        <div><kbd>Left click</kbd><span>Hold to break — time depends on the block</span></div>
+        <div><kbd>Ctrl</kbd><span>Crouch and walk slowly</span></div>
+        <div><kbd>Z</kbd><span>Hold to zoom in</span></div>
+        <div><kbd>B</kbd><span>Block palette — torches, sapings, anything you have dug up</span></div>
+        <div><kbd>F5</kbd><span>Third-person camera</span></div>
+        <div><kbd>F3</kbd><span>Debug panel: coordinates, chunk, light level</span></div>
+        <div><kbd>C</kbd><span>Crouch too, for laptops without a Ctrl key</span></div>
+        <div><kbd>C</kbd><span>Crafting — 19 recipes, and it says what you are missing</span></div>
+        <div><kbd>E</kbd><span>Use a door, open a chest, sleep in a bed</span></div>
+        <div><kbd>J</kbd><span>Today's challenge: three goals, everyone's seed</span></div>
+        <div><kbd>Q</kbd><span>Eat something from the bag (apples, berries)</span></div>
+        <div><kbd>Esc</kbd><span>Release the mouse</span></div>
+      </div>
+      <p class="touch-note">On a phone or tablet: drag the screen to look, use the thumb-stick to walk, and tap the MINE, PLACE, JUMP and ✈ buttons.</p>
+      <p class="note">Your world saves automatically — seed plus every block you changed. Press <b>New world</b> any time for a completely different random landscape.</p>
+      <button class="primary-button" id="got-it" type="button">Let's build <span>→</span></button>
+      <button class="link" id="close-help" type="button">close</button>
+      <p class="credits">Pixeled 3D · 49 block types · zero dependencies, one canvas · terrain, ores, plants and weather all rolled from the seed.</p>
+    </section>
+  </div>
+</div>
+
+<script type="module">
+  import { start } from './web/main.js';
+  start();
+</script>
+</body>
+</html>

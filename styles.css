@@ -1,0 +1,1143 @@
+/* Pixeled 3D — HUD styling. The canvas fills the window; everything else floats above it. */
+
+:root {
+  --ink: #eef5ef;
+  --muted: #9db0b6;
+  --panel: rgba(11, 23, 33, 0.72);
+  --panel-solid: #0e1c28;
+  --edge: rgba(160, 214, 255, 0.18);
+  --mint: #b3df9e;
+  --amber: #ffd479;
+  --shadow: 0 12px 30px rgba(4, 10, 16, 0.45);
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1620;
+  color: var(--ink);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.game-shell { position: fixed; inset: 0; }
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* ---------------------------------------------------------------- HUD */
+
+.hud { position: absolute; inset: 0; pointer-events: none; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.stats {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 12px 14px 10px;
+  min-width: 176px;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.brand span { color: var(--mint); margin-left: 4px; }
+
+.stats dl { margin: 10px 0 8px; display: grid; gap: 3px; }
+
+.stats dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+
+.stats dt { color: var(--muted); text-transform: lowercase; letter-spacing: 0.08em; }
+
+.stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.seed {
+  pointer-events: auto;
+  width: 100%;
+  background: rgba(179, 223, 158, 0.12);
+  border: 1px solid rgba(179, 223, 158, 0.3);
+  color: var(--mint);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.seed:hover { background: rgba(179, 223, 158, 0.2); }
+
+.actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.actions button {
+  min-width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+
+.actions button:hover { border-color: rgba(179, 223, 158, 0.5); }
+
+.actions button.active { background: rgba(179, 223, 158, 0.22); border-color: rgba(179, 223, 158, 0.6); }
+
+.actions button.primary {
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: linear-gradient(180deg, #7dcf62, #4fa544);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #0b1c10;
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  opacity: 0.85;
+}
+
+.crosshair i {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.75);
+}
+
+.crosshair i:first-child { left: 50%; top: 0; width: 2px; height: 22px; transform: translateX(-50%); }
+.crosshair i:last-child { top: 50%; left: 0; height: 2px; width: 22px; transform: translateY(-50%); }
+
+.start-hint {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: rgba(8, 18, 26, 0.72);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.4s ease;
+}
+
+.start-hint b { display: block; font-size: 18px; margin-bottom: 4px; }
+.start-hint span { color: var(--muted); font-size: 12px; }
+.start-hint.hidden { opacity: 0; visibility: hidden; }
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 132px;
+  transform: translate(-50%, 8px);
+  background: rgba(8, 18, 26, 0.85);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  max-width: min(80vw, 460px);
+  text-align: center;
+}
+
+.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------------------------------------------------------------- hotbar */
+
+.hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.slot {
+  position: relative;
+  width: 56px;
+  height: 62px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font: inherit;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.slot:hover { transform: translateY(-2px); }
+
+.slot.active {
+  border-color: var(--mint);
+  background: rgba(179, 223, 158, 0.18);
+  box-shadow: 0 0 0 1px rgba(179, 223, 158, 0.35), 0 6px 18px rgba(90, 180, 110, 0.25);
+}
+
+.slot-key {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+/* A tiny fake cube: bright top face, darker side — reads as a block at a glance. */
+.slot-block {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: linear-gradient(158deg, var(--block-top) 0 58%, var(--block-side) 58% 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.slot-name { font-size: 8px; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
+
+.selected {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- touch controls */
+
+.joystick {
+  position: absolute;
+  width: 124px;
+  height: 124px;
+  margin: -62px 0 0 -62px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: rgba(10, 22, 32, 0.35);
+  display: none;
+}
+
+.joystick.visible { display: block; }
+
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(179, 223, 158, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+.touch-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 108px;
+  display: none;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+.touch-button {
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  touch-action: none;
+}
+
+.touch-button.round { width: 62px; height: 62px; font-size: 22px; }
+.touch-button.wide { width: 78px; height: 78px; font-size: 12px; letter-spacing: 0.08em; }
+.touch-button.pressed { background: rgba(179, 223, 158, 0.4); transform: scale(0.96); }
+
+@media (pointer: coarse) {
+  .touch-controls { display: flex; }
+  .crosshair { opacity: 0.6; }
+  .hotbar { bottom: 30px; }
+  .slot { width: 48px; height: 56px; }
+  .selected { display: none; }
+}
+
+@media (max-width: 720px) {
+  .stats { min-width: 148px; padding: 10px 12px; }
+  .stats dl > div { font-size: 10px; }
+  .actions button.primary { padding: 0 10px; font-size: 11px; }
+  .start-hint { top: 40%; padding: 10px 14px; }
+  .start-hint b { font-size: 15px; }
+  .start-hint span { font-size: 10px; }
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(circle at 50% 30%, rgba(31, 62, 84, 0.75), rgba(6, 13, 20, 0.94));
+  z-index: 5;
+}
+
+/* A class rule such as `.overlay { display: grid }` beats the browser's own
+   `[hidden] { display: none }`, which would leave an overlay stuck on screen. Make the attribute
+   authoritative so `element.hidden = true` always works. */
+[hidden] { display: none !important; }
+
+.overlay.hidden { display: none; }
+
+/* Stacking: the loading bar under the menu, the menu under the help sheet. */
+.overlay.loading { z-index: 10; }
+.overlay.menu { z-index: 20; }
+.overlay.modal { z-index: 30; }
+
+.card {
+  width: min(560px, 94vw);
+  background: var(--panel-solid);
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+  padding: 26px 28px 24px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.card h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: 0.04em; }
+.card h1 span { color: var(--mint); }
+.card h2 { margin: 0 0 16px; font-size: 22px; }
+.card p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+.card small { display: block; color: #7f9299; font-size: 11px; line-height: 1.5; margin-top: 14px; }
+.card .note { background: rgba(179, 223, 158, 0.08); border-left: 3px solid var(--mint); text-align: left; padding: 10px 12px; border-radius: 8px; }
+
+.bar { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #79cf5f, #b3df9e); transition: width 0.2s ease; }
+
+.help-grid { display: grid; gap: 8px; text-align: left; margin-bottom: 18px; }
+.help-grid > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.help-grid span { color: var(--muted); margin-left: auto; text-align: right; }
+
+kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.touch-note { display: none; }
+
+@media (pointer: coarse) {
+  .touch-note { display: block; background: rgba(255, 212, 121, 0.1); border-left: 3px solid var(--amber); text-align: left; padding: 10px 12px; border-radius: 8px; }
+}
+
+.primary-button {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 22px;
+  font: inherit;
+  font-weight: 700;
+  color: #0b1c10;
+  background: linear-gradient(180deg, #8fdc70, #52a846);
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(60, 140, 70, 0.35);
+}
+
+.primary-button span { margin-left: 6px; }
+
+button.link {
+  display: block;
+  margin: 12px auto 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- start screen */
+
+/* The world keeps rendering behind the menu; this wash keeps the buttons readable. */
+.overlay.menu {
+  background:
+    radial-gradient(120% 90% at 50% 10%, rgba(120, 190, 255, 0.28), transparent 60%),
+    linear-gradient(180deg, rgba(9, 18, 28, 0.55), rgba(6, 12, 20, 0.86));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.menu-wash {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: radial-gradient(90% 70% at 50% 40%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(90% 70% at 50% 40%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+.menu-card {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 30px 30px 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(179, 223, 158, 0.28);
+  background: linear-gradient(180deg, rgba(15, 30, 42, 0.9), rgba(9, 18, 27, 0.94));
+  box-shadow: 0 30px 70px rgba(3, 8, 14, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(6px);
+  text-align: center;
+}
+
+.menu-head { position: relative; }
+
+.menu-logo {
+  margin: 0;
+  font-size: clamp(38px, 9vw, 64px);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  line-height: 1.05;
+  color: #eaf6e6;
+  text-shadow:
+    0 2px 0 #6f9c5c,
+    0 4px 0 #577f47,
+    0 6px 0 #3f6134,
+    0 10px 22px rgba(0, 0, 0, 0.55);
+}
+
+.menu-logo::after {
+  content: "3D";
+  display: block;
+  font-size: 0.32em;
+  letter-spacing: 0.42em;
+  color: var(--amber);
+  text-shadow: 0 2px 0 #6b4c14, 0 6px 12px rgba(0, 0, 0, 0.5);
+  margin-top: 4px;
+}
+
+/* Minecraft's swinging splash text. */
+.menu-splash {
+  display: inline-block;
+  margin: 12px 0 6px;
+  padding: 3px 12px;
+  font-size: clamp(13px, 3.4vw, 16px);
+  font-weight: 800;
+  color: #ffe14d;
+  text-shadow: 0 2px 0 #6b5300;
+  transform: rotate(-7deg);
+  animation: splash 1.6s ease-in-out infinite;
+}
+
+@keyframes splash {
+  0%, 100% { transform: rotate(-7deg) scale(1); }
+  50% { transform: rotate(-7deg) scale(1.09); }
+}
+
+.menu-subtitle {
+  margin: 6px auto 20px;
+  max-width: 42ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.menu-buttons { display: grid; gap: 10px; }
+
+.menu-button {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 12px;
+  border: 2px solid rgba(160, 214, 255, 0.22);
+  border-bottom-width: 4px;
+  background: linear-gradient(180deg, rgba(58, 87, 74, 0.85), rgba(33, 56, 47, 0.92));
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.08s ease, border-color 0.15s ease, filter 0.15s ease;
+}
+
+.menu-button:hover { filter: brightness(1.16); border-color: rgba(179, 223, 158, 0.55); }
+.menu-button:active { transform: translateY(2px); border-bottom-width: 2px; }
+
+.menu-button.primary {
+  padding: 18px 16px;
+  border-color: rgba(179, 223, 158, 0.5);
+  background: linear-gradient(180deg, #7ec25c, #4e8b3c);
+}
+
+.menu-button.primary .menu-button-label { font-size: 24px; }
+
+.menu-button-label { font-size: 18px; font-weight: 800; letter-spacing: 0.04em; }
+.menu-button-sub { font-size: 12px; color: rgba(238, 245, 239, 0.78); }
+.menu-button.primary .menu-button-sub { color: rgba(255, 255, 255, 0.88); }
+
+.menu-seed-row { display: flex; gap: 8px; }
+
+.menu-seed-row input {
+  flex: 1;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 2px solid rgba(160, 214, 255, 0.22);
+  background: rgba(6, 14, 21, 0.85);
+  color: var(--ink);
+  font: inherit;
+}
+
+.menu-seed-row input:focus { outline: none; border-color: rgba(179, 223, 158, 0.6); }
+
+.menu-go {
+  padding: 0 20px;
+  border-radius: 12px;
+  border: 2px solid rgba(179, 223, 158, 0.45);
+  background: rgba(179, 223, 158, 0.18);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.menu-small { display: flex; gap: 8px; margin-top: 4px; }
+
+.menu-chip {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(160, 214, 255, 0.2);
+  background: rgba(12, 24, 34, 0.75);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.menu-chip:hover { border-color: rgba(179, 223, 158, 0.5); }
+
+.menu-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 18px;
+  color: #8fa3a9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.menu-seedline {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(179, 223, 158, 0.12);
+  color: var(--mint);
+  font-variant-numeric: tabular-nums;
+}
+
+.menu-version {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  color: #6f838a;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+/* The HUD steps aside while a menu is open. */
+body.menu-open .hud { opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+.hud { transition: opacity 0.2s ease; }
+
+body.menu-open #game { cursor: default; }
+
+@media (max-width: 560px) {
+  .menu-card { padding: 22px 18px 16px; border-radius: 16px; }
+  .menu-button.primary .menu-button-label { font-size: 21px; }
+  .menu-foot { font-size: 10px; }
+}
+
+/* `hidden` must win over the flex/grid displays above. */
+.overlay.menu.hidden { display: none; }
+.menu-button[hidden] { display: none; }
+.menu-seed-row[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- new for v3.1 */
+
+:root { --ui-scale: 1; }
+
+/* HUD scale (Settings → HUD scale). `zoom` keeps every centred panel centred. */
+.hud { zoom: var(--ui-scale); }
+
+.menu-chip.active {
+  border-color: rgba(179, 223, 158, 0.75);
+  background: rgba(179, 223, 158, 0.16);
+  color: var(--ink);
+}
+
+.target-label {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 24, 0.55);
+  border: 1px solid var(--edge);
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.target-label:empty { opacity: 0; }
+
+.breath {
+  position: absolute;
+  left: 50%;
+  bottom: 128px;
+  transform: translateX(-50%);
+  width: min(280px, 52vw);
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 24, 0.55);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.breath i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #7ad2ff, #3f9fe0);
+  transition: width 0.12s linear;
+}
+
+.breath i.low { background: linear-gradient(90deg, #ffd479, #ff8a5c); }
+
+/* ---- settings panel inside the pause menu ---- */
+
+.settings-panel {
+  margin-top: 12px;
+  border-top: 1px solid var(--edge);
+  padding-top: 12px;
+  text-align: left;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-grid { display: grid; gap: 10px; }
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(110px, 1.2fr) 56px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.settings-row.switch { grid-template-columns: 1fr auto; }
+
+.settings-label { display: grid; gap: 2px; }
+.settings-label small { color: var(--muted); font-size: 10px; }
+
+.settings-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--mint);
+  background: transparent;
+}
+
+.settings-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--mint);
+}
+
+.settings-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+.settings-note { color: var(--muted); font-size: 10px; }
+
+.credits {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* A little more room for the wider HUD on phones. */
+@media (max-width: 560px) {
+  .target-label { top: calc(50% + 20px); font-size: 11px; }
+  .breath { bottom: 150px; }
+  .settings-row { grid-template-columns: 1fr 1fr 46px; font-size: 11px; }
+}
+
+/* ---------------------------------------------------------------- v3.3: palette, map, debug */
+
+.minimap {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(120px, calc(env(safe-area-inset-bottom) + 108px));
+  width: 118px;
+  height: 118px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(8, 16, 24, 0.6);
+  box-shadow: var(--shadow);
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.debug {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left));
+  top: 240px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(8, 16, 24, 0.7);
+  color: var(--mint);
+  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+  max-width: min(340px, 60vw);
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
+  margin: 12px 0 16px;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.palette-slot {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(10, 20, 30, 0.55);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.palette-slot:hover { border-color: rgba(179, 223, 158, 0.55); transform: translateY(-1px); }
+.palette-slot.active { border-color: var(--amber); background: rgba(255, 212, 121, 0.14); }
+.palette-slot .slot-block { width: 30px; height: 30px; border-radius: 6px; }
+.palette-name { text-align: center; line-height: 1.2; }
+.palette-count { color: var(--amber); font-variant-numeric: tabular-nums; min-height: 11px; }
+.palette-hint { color: var(--muted); font-size: 11px; margin: 0 0 4px; }
+.overlay.modal .card.wide { width: min(680px, 92vw); }
+
+@media (max-width: 560px) {
+  .minimap { width: 88px; height: 88px; bottom: max(150px, calc(env(safe-area-inset-bottom) + 140px)); }
+  .debug { top: 210px; font-size: 10px; }
+}
+
+/* ------------------------------------------------------------------ v3.4: crafting, chests, sleep */
+
+.craft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.craft-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 2px solid #33302b;
+  border-radius: 6px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.craft-row:hover { background: #46423b; }
+
+.craft-row.affordable {
+  border-color: #7fce6a;
+  background: #3f4a37;
+}
+
+.craft-row .craft-text b { display: block; font-size: 13px; }
+.craft-row .craft-text small { color: #b9b1a3; font-size: 11px; }
+
+.craft-needs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  justify-content: flex-end;
+  max-width: 46%;
+  font-size: 11px;
+  color: #cfc7b8;
+}
+
+.craft-need.short { color: #e3836f; }
+.craft-need i, .inv-chip i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  border: 1px solid #23211e;
+  vertical-align: -1px;
+}
+
+.inv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #ded6c6;
+}
+
+.inv-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #3b3833;
+  border: 1px solid #4c4841;
+}
+
+.panel.wide { width: min(680px, 94vw); }
+.empty-note { color: #b9b1a3; font-size: 13px; margin: 4px 0 0; }
+
+/* The blocky cube in each hotbar slot and palette button. */
+.slot-cube {
+  display: block;
+  width: 34px;
+  height: 34px;
+  image-rendering: pixelated;
+}
+
+.hotbar .slot { position: relative; }
+
+.sleep {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #05070c;
+  pointer-events: none;
+  transition: opacity 220ms ease-out;
+}
+
+/* Buttons that sit next to a primary button in a modal footer. */
+.ghost-button {
+  padding: 9px 16px;
+  border: 2px solid #4c4841;
+  border-radius: 6px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ghost-button:hover { background: #46423b; }
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* ------------------------------------------------------------------ v3.5: hearts and death */
+
+.hearts {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 20px;
+  image-rendering: pixelated;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6));
+  z-index: 6;
+}
+
+.death h2 { color: #e05a4a; }
+.death-cause { color: #e8e2d6; font-size: 15px; margin: 0 0 4px; }
+
+@media (max-width: 560px) {
+  .hearts { width: 150px; height: 15px; bottom: 96px; }
+}
+
+/* ------------------------------------------------------------------ v3.5: modes, daily, recents */
+
+.menu-shelf-title {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #cfc7b8;
+}
+
+.mode-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 2px solid #33302b;
+  border-left: 4px solid var(--mode-colour, #4f9d5b);
+  border-radius: 7px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-card:hover { background: #46423b; transform: translateY(-1px); }
+.mode-card.active { background: #4a5142; border-color: #7fce6a; }
+.mode-card .mode-icon { font-size: 18px; }
+.mode-card .mode-name { font-size: 14px; font-weight: 700; }
+.mode-card .mode-badge { font-size: 9px; letter-spacing: 0.1em; color: #b9b1a3; text-transform: uppercase; }
+.mode-card .mode-hook { font-size: 11px; color: #d6cec0; }
+
+.daily-card {
+  border: 2px solid #4c4841;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #3b3833, #34312c);
+  padding: 12px 14px;
+}
+
+.daily-head, .daily-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.daily-badge {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #f0ce55;
+}
+
+.daily-seed { font-size: 11px; color: #b9b1a3; }
+.daily-goals { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; }
+.daily-foot { font-size: 11px; color: #b9b1a3; }
+
+.daily-goal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ded6c6;
+}
+
+.daily-goal.done { color: #9fdc8c; text-decoration: line-through; }
+
+.recent-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.recent-chip {
+  padding: 6px 10px;
+  border: 1px solid #4c4841;
+  border-radius: 999px;
+  background: #3b3833;
+  color: #e8e2d6;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recent-chip:hover { background: #46423b; border-color: #7fce6a; }
+.recent-chip small { color: #b9b1a3; margin-left: 6px; }
+
+/* HUD: which mode you are playing, and the speedrun clock. */
+.mode-chip {
+  position: fixed;
+  top: 46px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 2px solid var(--mode-colour, #4f9d5b);
+  background: rgba(20, 19, 17, 0.6);
+  color: #e8e2d6;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.run-timer {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(20, 19, 17, 0.62);
+  border: 2px solid #d0684f;
+  color: #f3e6dd;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.run-timer.finished { border-color: #7fce6a; color: #d8f5c8; }
+
+.challenge-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+
+.challenge-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #3b3833;
+  border: 2px solid #33302b;
+  font-size: 13px;
+}
+
+.challenge-row.complete { border-color: #7fce6a; background: #3f4a37; }
+.challenge-icon { text-align: center; }
+.challenge-bar {
+  display: block;
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.challenge-bar i { display: block; height: 100%; background: #7fce6a; transition: width 180ms ease-out; }
+.challenge-count { font-variant-numeric: tabular-nums; color: #ded6c6; }
+
+@media (max-width: 640px) {
+  .mode-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* v3.6 — the bag chip: food in the HUD, and a click that eats it. */
+.bag {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(12, 14, 22, 0.66);
+  color: var(--text, #eef1f7);
+  font: 600 14px/1 var(--ui-font, system-ui, sans-serif);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.bag:hover { transform: translateX(-50%) scale(1.05); background: rgba(28, 32, 46, 0.8); }
+.bag:active { transform: translateX(-50%) scale(0.97); }
+.inv-chip.food i { background: #c8402f; }
+
+@media (max-width: 560px) {
+  .bag { bottom: 118px; font-size: 12px; }
+}

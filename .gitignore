@@ -1,0 +1,11 @@
+# Android / Gradle build output and local SDK configuration
+.gradle/
+**/build/
+local.properties
+
+# Java compile output
+*.class
+
+# Python bytecode
+__pycache__/
+*.py[cod]

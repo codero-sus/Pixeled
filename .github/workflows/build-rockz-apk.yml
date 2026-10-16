@@ -1,0 +1,64 @@
+name: Build Rockz APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rockz-android/**'
+      - '.github/workflows/build-rockz-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      # ubuntu-latest already ships the Android SDK and cmdline-tools. The
+      # android-actions/setup-android action is deprecated and now runs on Node 24,
+      # where it fails; use the preinstalled SDK instead.
+      - name: Install the Android SDK packages Rockz needs
+        run: |
+          set -o pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -x "$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)" ]; then
+            echo "No usable SDK at $SDK; downloading the command line tools"
+            SDK="$HOME/android-sdk"
+            curl -sSLo /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            rm -rf /tmp/cmdline-tools-unpacked
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-unpacked
+            mkdir -p "$SDK/cmdline-tools"
+            mv /tmp/cmdline-tools-unpacked/cmdline-tools "$SDK/cmdline-tools/latest"
+          fi
+          SDKM="$(find "$SDK" -name sdkmanager -type f | head -1)"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKM")" >> "$GITHUB_PATH"
+          export ANDROID_HOME="$SDK"
+          "$SDKM" --version
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        working-directory: rockz-android
+        run: |
+          set -o pipefail
+          status=0
+          gradle :app:assembleDebug --console=plain 2>&1 | tee /tmp/gradle.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "error:|FAILURE:|What went wrong|^> |Could not|required by" /tmp/gradle.log \
+              | head -60 | while IFS= read -r line; do
+              echo "::error title=gradle::$line"
+            done
+          fi
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rockz-debug-apk
+          path: rockz-android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
