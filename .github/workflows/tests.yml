@@ -1,0 +1,153 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'web/**'
+      - 'python/**'
+      - 'java/**'
+      - 'rockz-android/**'
+      - 'tests/**'
+      - 'index.html'
+      - '.github/workflows/tests.yml'
+
+jobs:
+  web:
+    name: Web edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Web modules smoke test
+        run: node tests/web_smoke.mjs
+      - name: Web boot test against the real markup
+        run: node tests/web_dom_smoke.mjs
+      - name: Shader lint
+        run: node tests/web_shaders.mjs
+      - name: Every module parses
+        run: for file in web/*.js; do node --check "$file" || exit 1; done
+
+  python:
+    name: Python edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python edition smoke test
+        run: python3 tests/python_smoke.py
+      - name: Headless screenshot
+        run: python3 python/pixeled.py --render /tmp/pixeled.png --seed 2408 --width 320 --height 180
+      - name: Upload the screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixeled-python-screenshot
+          path: /tmp/pixeled.png
+
+  java:
+    name: Java edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Static reference check
+        run: |
+          python3 -m pip install --quiet javalang
+          python3 tests/java_check.py java/pixeled rockz-android/app/src
+      - name: Compile the Java edition
+        run: |
+          set -o pipefail
+          status=0
+          javac -Xlint:all -d out java/pixeled/*.java 2>&1 | tee javac-java.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "error:" javac-java.log | head -60 | while IFS= read -r line; do
+              echo "::error title=javac::$line"
+            done
+          fi
+          exit "$status"
+      - name: Upload javac output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javac-java-log
+          path: javac-java.log
+          if-no-files-found: ignore
+      - name: Java edition smoke test
+        run: |
+          set -o pipefail
+          status=0
+          java -Djava.awt.headless=true -cp out pixeled.Smoke 2>&1 | tee smoke-java.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAIL|Exception|Error|^\s+at " smoke-java.log | head -40 | while IFS= read -r line; do
+              echo "::error title=smoke::$line"
+            done
+          fi
+          exit "$status"
+      - name: Headless screenshot
+        run: |
+          java -Djava.awt.headless=true -cp out pixeled.Pixeled --render --seed 2408 --width 320 --height 180 --out /tmp/pixeled-java.png
+          ls -l /tmp/pixeled-java.png
+      - name: Upload the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixeled-java-screenshot
+          path: /tmp/pixeled-java.png
+          if-no-files-found: ignore
+
+  rockz:
+    name: Rockz core (mobile edition)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile the Android-free core of Rockz
+        working-directory: rockz-android/app/src
+        run: |
+          set -o pipefail
+          status=0
+          javac -Xlint:all -d /tmp/rockz-core \
+            main/java/com/pixeled/rockz/Blocks.java \
+            main/java/com/pixeled/rockz/Noise.java \
+            main/java/com/pixeled/rockz/SaveStore.java \
+            main/java/com/pixeled/rockz/WorldModel.java \
+            main/java/com/pixeled/rockz/PlayerModel.java \
+            main/java/com/pixeled/rockz/Raycast.java \
+            main/java/com/pixeled/rockz/Renderer.java \
+            main/java/com/pixeled/rockz/TouchControls.java \
+            test/java/com/pixeled/rockz/MemoryStore.java \
+            test/java/com/pixeled/rockz/RockzSmoke.java 2>&1 | tee rockz-javac.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "error:" rockz-javac.log | head -60 | while IFS= read -r line; do
+              echo "::error title=javac::$line"
+            done
+          fi
+          exit "$status"
+      - name: Upload javac output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javac-rockz-log
+          path: rockz-android/app/src/rockz-javac.log
+          if-no-files-found: ignore
+      - name: Rockz smoke test
+        run: |
+          set -o pipefail
+          status=0
+          java -Djava.awt.headless=true -cp /tmp/rockz-core com.pixeled.rockz.RockzSmoke 2>&1 | tee smoke-rockz.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAIL|Exception|Error|^\s+at " smoke-rockz.log | head -40 | while IFS= read -r line; do
+              echo "::error title=smoke::$line"
+            done
+          fi
+          exit "$status"
